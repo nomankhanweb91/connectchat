@@ -12,9 +12,13 @@ Backend foundation for registration, authentication, profile management, authent
 
 ```sh
 npm install
-mysql -u root -p < backend/database/schema.sql
+mysql -u root -p -e "CREATE DATABASE connectchat CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
+mysql -u root -p -e "CREATE USER 'connectchat_app'@'127.0.0.1' IDENTIFIED BY 'replace-with-a-long-random-password'; GRANT ALL PRIVILEGES ON connectchat.* TO 'connectchat_app'@'127.0.0.1';"
+mysql --host=127.0.0.1 --user=connectchat_app --password connectchat < backend/database/schema.sql
 cp .env.example .env
 ```
+
+Create the database with an administrative account, then apply the schema using an application account scoped to that database. The schema file contains table definitions only; the database selected on the `mysql` command line is the only database it can affect.
 
 Set every value in `.env`, especially `DATABASE_PASSWORD`, `JWT_SECRET`, and `REFRESH_TOKEN_SECRET`. Generate independent secrets with `openssl rand -base64 48` or a password manager; each JWT/refresh secret must be at least 32 characters. Never commit `.env`.
 
@@ -242,7 +246,45 @@ Username comparison is case-insensitive under the database collation. SQL statem
 
 ## Tests
 
-`npm test` runs request validation and HTTP boundary tests; MySQL-backed auth, directory, messaging, image, and moderation suites are skipped by default. They cover registration/profile, directory privacy, message/image access, block enforcement across REST and Socket.IO, report validation/ownership/duplicates, and rate limiting. To run them, create a disposable database whose name ends in `_test` (for example `connectchat_test`), import the schema and apply all migrations, configure test-only DB credentials plus a temporary `UPLOAD_STORAGE_DIR`, and set `RUN_MYSQL_INTEGRATION=true` before `npm test`. The runner refuses integration tests for a database name that does not end in `test`. Never point tests at production data.
+`npm test` runs request validation and HTTP boundary tests; MySQL-backed auth, directory, messaging, image, Socket.IO, and moderation suites are skipped by default. They cover registration/profile, directory privacy, message/image access, block enforcement across REST and Socket.IO, report validation/ownership/duplicates, and rate limiting. Integration tests are enabled only by `RUN_MYSQL_INTEGRATION=true`. The test runner refuses to start them unless `DATABASE_NAME` ends exactly in `_test` (case-insensitive). Use a dedicated disposable database and account; never point tests at production data.
+
+### Safe MySQL integration-test setup
+
+The integration suites require these connection variables: `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_NAME`, `DATABASE_USER`, and `DATABASE_PASSWORD`. Also set `UPLOAD_STORAGE_DIR` to a disposable temporary directory because the image suite writes files there. `RUN_MYSQL_INTEGRATION=true` enables the suites; the test runner forces `NODE_ENV=test` and supplies test-only JWT secrets if they are not set. The default DB target is `connectchat_test`, but provide an explicit test-only account and password.
+
+For a fresh disposable database on a local MySQL 8 server, provision it and a least-privilege test account (replace the example password locally; do not commit it):
+
+```sql
+CREATE DATABASE connectchat_test CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+CREATE USER 'connectchat_test'@'127.0.0.1' IDENTIFIED BY 'replace-with-a-local-test-only-password';
+GRANT ALL PRIVILEGES ON connectchat_test.* TO 'connectchat_test'@'127.0.0.1';
+```
+
+Run that SQL once through an administrative MySQL session. Then, from Command Prompt in the repository root, initialize only the explicitly selected `connectchat_test` database. The Phase 1 schema includes the Phase 2 online-directory index, so the separate Phase 2 index migration is not run on a fresh schema. Apply the remaining migrations in order:
+
+```bat
+mysql --host=127.0.0.1 --port=3306 --user=connectchat_test --password connectchat_test < backend\database\schema.sql
+mysql --host=127.0.0.1 --port=3306 --user=connectchat_test --password connectchat_test < backend\database\migrations\phase3_messaging.sql
+mysql --host=127.0.0.1 --port=3306 --user=connectchat_test --password connectchat_test < backend\database\migrations\phase4_image_messaging.sql
+mysql --host=127.0.0.1 --port=3306 --user=connectchat_test --password connectchat_test < backend\database\migrations\phase5_moderation.sql
+```
+
+The `--password` option prompts interactively. These commands explicitly select `connectchat_test`; do not replace that target with another database. For an existing Phase 1 test database that does not already have the directory index, apply `phase2_user_directory_online_index.sql` before Phase 3. Do not apply it after importing the current schema, because that schema already creates the index.
+
+Set the test environment in PowerShell (the password is only an example; enter the local test account’s password):
+
+```powershell
+$env:RUN_MYSQL_INTEGRATION = 'true'
+$env:DATABASE_HOST = '127.0.0.1'
+$env:DATABASE_PORT = '3306'
+$env:DATABASE_NAME = 'connectchat_test'
+$env:DATABASE_USER = 'connectchat_test'
+$env:DATABASE_PASSWORD = 'replace-with-a-local-test-only-password'
+$env:UPLOAD_STORAGE_DIR = Join-Path $env:TEMP 'connectchat-test-uploads'
+npm test
+```
+
+The integration fixtures create uniquely named temporary accounts and remove their rows during cleanup. Drop `connectchat_test` only after confirming it contains no data you need; it should never contain production data.
 
 ## Admin setup
 
