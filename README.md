@@ -57,7 +57,7 @@ Username comparison is case-insensitive under the database collation. SQL statem
 
 ## Tests
 
-`npm test` runs request validation, HTTP boundary, unauthorized access and health-check tests. The health test accepts either healthy or unavailable DB state so it can run before provisioning MySQL. Persisted registration/login/profile/directory/refresh/deactivation flows require a dedicated disposable MySQL test database; import the schema and use a separate test environment. Never point tests at production data.
+`npm test` runs request validation, HTTP boundary, unauthorized access and health-check tests; the MySQL-backed flow suite is skipped by default. To run persisted registration, duplicate account, invalid input, login, wrong password, profile, directory filters, logout and deactivation tests, create a disposable database whose name ends in `_test` (for example `connectchat_test`), import the schema, configure test-only DB credentials, and set `RUN_MYSQL_INTEGRATION=true` before running `npm test`. The runner refuses integration tests for a DB name that does not end in `test`. Never point tests at production data.
 
 ## Admin setup
 
