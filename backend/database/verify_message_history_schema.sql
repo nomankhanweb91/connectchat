@@ -11,8 +11,8 @@ SELECT
 FROM (
   SELECT 'conversation_members' AS table_name, 'conversation_id' AS column_name
   UNION ALL SELECT 'conversation_members', 'user_id'
-  UNION ALL SELECT 'blocks', 'blocker_id'
-  UNION ALL SELECT 'blocks', 'blocked_id'
+  UNION ALL SELECT 'blocks', 'blocker_user_id'
+  UNION ALL SELECT 'blocks', 'blocked_user_id'
   UNION ALL SELECT 'messages', 'id'
   UNION ALL SELECT 'messages', 'conversation_id'
   UNION ALL SELECT 'messages', 'sender_id'
