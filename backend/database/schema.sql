@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   UNIQUE KEY uq_users_username (username),
   KEY idx_users_directory (is_active,country,city,gender,created_at),
+  KEY idx_users_last_seen (is_active,last_seen),
   KEY idx_users_name (name),
   CONSTRAINT chk_users_username CHECK (username REGEXP '^[A-Za-z0-9_]{4,30}$')
 ) ENGINE=InnoDB;

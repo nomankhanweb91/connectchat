@@ -1,6 +1,6 @@
-# ConnectChat backend (Phase 1)
+# ConnectChat backend (Phase 1 and 2)
 
-Production-oriented API foundation for registration, authentication, profile management and a paginated user directory. This phase does not include messaging, sockets, media upload, a client app or an admin UI.
+Backend foundation for registration, authentication, profile management and authenticated user discovery. Messaging, sockets, media upload, client apps and an admin UI are outside these phases.
 
 ## Requirements
 
@@ -18,7 +18,7 @@ cp .env.example .env
 
 Set every value in `.env`, especially `DATABASE_PASSWORD`, `JWT_SECRET`, and `REFRESH_TOKEN_SECRET`. Generate independent secrets with `openssl rand -base64 48` or a password manager; each JWT/refresh secret must be at least 32 characters. Never commit `.env`.
 
-Environment variables: `NODE_ENV`, `PORT`, `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_NAME`, `DATABASE_USER`, `DATABASE_PASSWORD`, `JWT_SECRET`, `JWT_EXPIRES_IN`, `REFRESH_TOKEN_SECRET`, `REFRESH_TOKEN_EXPIRES_IN`, `CORS_ORIGIN` (comma-separated exact origins), and `BCRYPT_ROUNDS` (10–15).
+Environment variables: `NODE_ENV`, `PORT`, `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_NAME`, `DATABASE_USER`, `DATABASE_PASSWORD`, `JWT_SECRET`, `JWT_EXPIRES_IN`, `REFRESH_TOKEN_SECRET`, `REFRESH_TOKEN_EXPIRES_IN`, `CORS_ORIGIN` (comma-separated exact origins), `BCRYPT_ROUNDS` (10–15), and `ONLINE_THRESHOLD_MINUTES` (1–1440, default 5).
 
 ## Run
 
@@ -51,13 +51,64 @@ All successful responses use `{ "success": true, "data": ..., "message": "..." }
 | GET | `/api/users/me` | Bearer access token | Current user's safe profile |
 | PUT | `/api/users/me` | Bearer access token | Update name, country, city, gender |
 | DELETE | `/api/users/me` | Bearer access token | Deactivate account and revoke sessions |
-| GET | `/api/users` | Bearer access token | Filter/paginate directory using `search`, `country`, `city`, `gender`, `page`, `limit` (max 100) |
+| GET | `/api/users` | Bearer access token | Excludes the caller; filter and paginate the public directory |
+| GET | `/api/users/:id` | Public | Fetch a safe public profile by user UUID |
 
-Username comparison is case-insensitive under the database collation. SQL statements are parameterized. The user-list API never returns hashes or tokens. Authentication routes have a stricter rate limit; JSON bodies are capped at 32 KB.
+### User directory
+
+`GET /api/users` accepts these query parameters (all filters combine with AND):
+
+| Parameter | Behavior |
+|---|---|
+| `search` | Prefix search in username or display name, 1–100 characters |
+| `country`, `city` | Case-insensitive exact matches under the MySQL collation |
+| `gender` | Exact match |
+| `online` | `true` or `false` based on recent `last_seen` activity |
+| `page` | 1-based page number, 1–10,000; default 1 |
+| `limit` | 1–100 results; default 20 |
+
+Example:
+
+```http
+GET /api/users?search=noman&country=India&city=Delhi&gender=Male&online=true&page=1&limit=20
+Authorization: Bearer <access-token>
+```
+
+Each directory entry and public profile contains only `id`, `username`, `name`, `country`, `city`, `gender`, `profileImageUrl`, `isVerified`, `isOnline`, and `lastSeen`. Password hashes, roles, sessions, and tokens are excluded. Directory results never include the authenticated caller. Results sort online first, then by recent activity, username, and ID for stable pagination ordering. Search is a literal prefix match so the existing username and name indexes can help avoid a full substring scan.
+
+Online means the user has an authenticated API request recorded in `last_seen` within `ONLINE_THRESHOLD_MINUTES` (default 5). The authentication middleware updates `last_seen` on authenticated requests. This is an activity-based approximation; without a realtime connection, it is not a live socket-presence signal. SQL uses the database clock for the cutoff. Existing Phase 1 schema already has `last_seen`, username/name indexes, and a composite country/city/gender directory index. Apply `backend/database/migrations/phase2_user_directory_online_index.sql` once to an existing Phase 1 database to add `(is_active, last_seen)` for online filtering; fresh schema imports already include it. This repository does not use an automatic migration runner.
+
+Example success response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "users": [{
+      "id": "0e5e6af2-70cb-48d6-8a1d-499048c9f8a2",
+      "username": "noman_1",
+      "name": "Noman Khan",
+      "country": "India",
+      "city": "Delhi",
+      "gender": "Male",
+      "profileImageUrl": null,
+      "isVerified": false,
+      "isOnline": true,
+      "lastSeen": "2026-09-27T12:00:00.000Z"
+    }],
+    "pagination": { "page": 1, "limit": 20, "total": 1, "totalPages": 1 }
+  },
+  "message": "Users fetched successfully"
+}
+```
+
+Public profile example: `GET /api/users/0e5e6af2-70cb-48d6-8a1d-499048c9f8a2`. This route does not require authentication and returns the same public profile fields, or a structured `404` if the account is missing or inactive.
+
+Username comparison is case-insensitive under the database collation. SQL statements are parameterized. Authentication routes have a stricter rate limit; JSON bodies are capped at 32 KB.
 
 ## Tests
 
-`npm test` runs request validation, HTTP boundary, unauthorized access and health-check tests; the MySQL-backed flow suite is skipped by default. To run persisted registration, duplicate account, invalid input, login, wrong password, profile, directory filters, logout and deactivation tests, create a disposable database whose name ends in `_test` (for example `connectchat_test`), import the schema, configure test-only DB credentials, and set `RUN_MYSQL_INTEGRATION=true` before running `npm test`. The runner refuses integration tests for a DB name that does not end in `test`. Never point tests at production data.
+`npm test` runs request validation and HTTP boundary tests; MySQL-backed auth and directory suites are skipped by default. They cover registration/login, profile operations, directory auth, self-exclusion, username/name search, filters, online status, pagination, public profile, response privacy, and invalid parameters. To run them, create a disposable database whose name ends in `_test` (for example `connectchat_test`), import the schema, configure test-only DB credentials, and set `RUN_MYSQL_INTEGRATION=true` before `npm test`. The runner refuses integration tests for a database name that does not end in `test`. Never point tests at production data.
 
 ## Admin setup
 
