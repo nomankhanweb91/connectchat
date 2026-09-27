@@ -20,6 +20,22 @@ const roomName=(conversationId:string)=>`conversation:${conversationId}`;
 const genericError={code:'INTERNAL_ERROR',message:'Unable to complete socket request'};
 type PresencePeer=import('mysql2').RowDataPacket&{conversation_id:string;user_id:string;last_seen:Date|null};
 function socketError(error:unknown){return error instanceof HttpError?{code:error.code,message:error.message}:genericError;}
+const sensitiveDiagnosticValue=/\b(password|passwd|secret|token|authorization|cookie|refresh[_-]?token|access[_-]?token|credential|api[_-]?key|private[_-]?key)\b(\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
+const diagnosticJwtValue=/\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g;
+const diagnosticBearerValue=/\bBearer\s+[^\s,;]+/gi;
+const diagnosticOpaqueValue=/\b[A-Za-z0-9_-]{48,}\b/g;
+function redactSocketDiagnostic(value:string):string{
+ let safe=value;
+ for(const[key,secret]of Object.entries(process.env))if(secret&&/(?:PASSWORD|PASSWD|SECRET|TOKEN|COOKIE|AUTHORIZATION|CREDENTIAL|API[_-]?KEY|PRIVATE[_-]?KEY)/i.test(key))safe=safe.split(secret).join('[REDACTED]');
+ return safe.replace(diagnosticBearerValue,'Bearer [REDACTED]').replace(diagnosticJwtValue,'[REDACTED_JWT]').replace(sensitiveDiagnosticValue,'$1$2[REDACTED]').replace(diagnosticOpaqueValue,'[REDACTED_TOKEN]');
+}
+function logUnexpectedJoinError(error:unknown,userId:string,conversationId:string|null):void{
+ const value=typeof error==='object'&&error!==null?error as {name?:unknown;message?:unknown;stack?:unknown;constructor?:{name?:unknown}}:undefined;
+ const errorName=error instanceof Error?error.name:typeof value?.name==='string'?value.name:typeof value?.constructor?.name==='string'?value.constructor.name:typeof error;
+ const errorMessage=error instanceof Error?error.message:typeof value?.message==='string'?value.message:String(error);
+ const stack=error instanceof Error?error.stack:typeof value?.stack==='string'?value.stack:undefined;
+ console.error('Unexpected Socket.IO handler error:',{event:'conversation:join',userId,conversationId,errorName:redactSocketDiagnostic(errorName),errorMessage:redactSocketDiagnostic(errorMessage),stack:stack?redactSocketDiagnostic(stack):undefined});
+}
 function acknowledge<T>(ack:((result:Ack<T>)=>void)|undefined,result:Ack<T>){if(typeof ack==='function')ack(result);}
 function success<T>(ack:((result:Ack<T>)=>void)|undefined,data:T){acknowledge(ack,{success:true,data});}
 function failure<T>(ack:((result:Ack<T>)=>void)|undefined,error:unknown){acknowledge(ack,{success:false,error:socketError(error)});}
@@ -44,7 +60,7 @@ function emitPresenceSnapshot(socket:AppSocket,peers:PresencePeer[]):void{
 }
 
 function registerHandlers(socket:AppSocket,io:Server<ClientToServerEvents,ServerToClientEvents,InterServerEvents,SocketData>):void{
- socket.on('conversation:join',(payload,ack)=>{void (async()=>{let conversationId:string|undefined;try{({conversationId}=validPayload(conversationEventSchema,payload));await authorizeConversation(socket,conversationId);await socket.join(roomName(conversationId));const peers=await getPresencePeers(socket.data.user.id,conversationId);if(peers.length===0){await socket.leave(roomName(conversationId));throw new HttpError(404,'CONVERSATION_NOT_FOUND','Conversation not found');}emitPresenceSnapshot(socket,peers);success(ack,{conversationId});}catch(error){if(conversationId)await socket.leave(roomName(conversationId));failure(ack,error);}})();});
+ socket.on('conversation:join',(payload,ack)=>{void (async()=>{let conversationId:string|undefined;try{({conversationId}=validPayload(conversationEventSchema,payload));await authorizeConversation(socket,conversationId);await socket.join(roomName(conversationId));const peers=await getPresencePeers(socket.data.user.id,conversationId);if(peers.length===0){await socket.leave(roomName(conversationId));throw new HttpError(404,'CONVERSATION_NOT_FOUND','Conversation not found');}emitPresenceSnapshot(socket,peers);success(ack,{conversationId});}catch(error){if(!(error instanceof HttpError))logUnexpectedJoinError(error,socket.data.user.id,conversationId??null);if(conversationId)await socket.leave(roomName(conversationId));failure(ack,error);}})();});
  socket.on('conversation:leave',(payload,ack)=>{void (async()=>{try{const{conversationId}=validPayload(conversationEventSchema,payload);await authorizeConversation(socket,conversationId);await socket.leave(roomName(conversationId));success(ack,{conversationId});}catch(error){failure(ack,error);}})();});
  socket.on('message:send',(payload,ack)=>{void (async()=>{try{const{conversationId,content}=validPayload(socketMessageSchema,payload);if(!allowMessage(socket.data.user.id))throw new HttpError(429,'RATE_LIMITED','Message rate limit exceeded');await authorizeConversation(socket,conversationId);const message=await createMessage(socket.data.user.id,conversationId,content);io.to(roomName(conversationId)).emit('message:new',message);success(ack,message);}catch(error){failure(ack,error);}})();});
  socket.on('message:delivered',(payload,ack)=>{void (async()=>{try{const{messageId}=validPayload(deliveredEventSchema,payload);const receipt=await markMessageDelivered(socket.data.user.id,messageId);if(receipt.status==='DELIVERED')io.to(roomName(receipt.conversationId)).emit('message:delivered',{conversationId:receipt.conversationId,messageId,status:'DELIVERED',deliveredAt:receipt.deliveredAt,recipientId:socket.data.user.id});success(ack,{messageId,status:receipt.status,deliveredAt:receipt.deliveredAt,readAt:receipt.readAt});}catch(error){failure(ack,error);}})();});
