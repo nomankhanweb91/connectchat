@@ -69,9 +69,13 @@ describe('Phase 5 block and report enforcement',{skip:!enabled},()=>{
   assert.equal((await request(app).post(`/api/conversations/${conversationId}/messages`).set('Authorization',owner).send({content:'blocked'})).status,404);
   assert.equal((await request(app).post(`/api/conversations/${conversationId}/messages`).set('Authorization',peer).send({content:'blocked in reverse'})).status,404);
   assert.equal((await request(app).post('/api/reports/message').set('Authorization',owner).send({messageId,reason:'SPAM'})).status,404);
+  const[beforeSocketMessages]=await pool.execute<(import('mysql2').RowDataPacket&{total:number})[]>('SELECT COUNT(*) AS total FROM messages WHERE conversation_id=?',[conversationId]);
   assert.equal((await emitAck<MessageDto>(sockets[0]!,'message:send',{conversationId,content:'blocked socket'})).success,false);
   assert.equal((await emitAck<MessageDto>(sockets[1]!,'message:send',{conversationId,content:'blocked socket in reverse'})).success,false);
+  assert.equal((await emitAck<{conversationId:string}>(sockets[0]!,'typing:start',{conversationId})).success,false);
   assert.equal((await emitAck<{conversationId:string}>(sockets[1]!,'conversation:join',{conversationId})).success,false);
+  const[afterSocketMessages]=await pool.execute<(import('mysql2').RowDataPacket&{total:number})[]>('SELECT COUNT(*) AS total FROM messages WHERE conversation_id=?',[conversationId]);
+  assert.equal(Number(afterSocketMessages[0]?.total),Number(beforeSocketMessages[0]?.total));
   // An image sent before blocking is denied to both conversation participants until unblocked.
   assert.equal((await request(app).get(`/api/uploads/images/${imageId}`).set('Authorization',owner)).status,404);
   assert.equal((await request(app).get(`/api/uploads/images/${imageId}`).set('Authorization',peer)).status,404);
@@ -92,3 +96,4 @@ describe('Phase 5 block and report enforcement',{skip:!enabled},()=>{
   assert.equal(rateLimited,true);
  });
 });
+
