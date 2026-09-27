@@ -12,6 +12,7 @@ coverage/
 tmp/
 temp/
 uploads/
+/var/uploads/
 *.pem
 *.key
 *.crt

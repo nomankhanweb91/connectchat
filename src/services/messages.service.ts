@@ -5,8 +5,8 @@ import { HttpError } from '../utils/http-error';
 import type { MessageDto, MessageStatus } from '../types/messaging.dto';
 import { isConversationMember } from './conversations.service';
 
-type MessageRow=RowDataPacket&{id:string;conversation_id:string;sender_id:string;message_type:'TEXT';content:string;created_at:Date;updated_at:Date;status:MessageStatus;delivered_at:Date|null;read_at:Date|null};
-function toMessage(row:MessageRow):MessageDto{return {id:row.id,conversationId:row.conversation_id,senderId:row.sender_id,messageType:row.message_type,content:row.content,createdAt:row.created_at,updatedAt:row.updated_at,status:row.status,deliveredAt:row.delivered_at,readAt:row.read_at};}
+type MessageRow=RowDataPacket&{id:string;conversation_id:string;sender_id:string;message_type:'TEXT'|'IMAGE';content:string;created_at:Date;updated_at:Date;status:MessageStatus;delivered_at:Date|null;read_at:Date|null;image_id?:string|null;mime_type?:string|null;width?:number|null;height?:number|null;size_bytes?:number|null};
+function toMessage(row:MessageRow):MessageDto{return {id:row.id,conversationId:row.conversation_id,senderId:row.sender_id,messageType:row.message_type,content:row.content,...(row.image_id?{image:{id:row.image_id,url:`/api/uploads/images/${row.image_id}`,mimeType:row.mime_type!,width:Number(row.width),height:Number(row.height),sizeBytes:Number(row.size_bytes)}}:{}),createdAt:row.created_at,updatedAt:row.updated_at,status:row.status,deliveredAt:row.delivered_at,readAt:row.read_at};}
 
 export async function createMessage(senderId:string,conversationId:string,content:string):Promise<MessageDto>{
  const connection=await pool.getConnection();
@@ -26,10 +26,30 @@ export async function createMessage(senderId:string,conversationId:string,conten
  }catch(error){await connection.rollback();throw error;}finally{connection.release();}
 }
 
+export async function createImageMessage(senderId:string,conversationId:string,imageId:string):Promise<MessageDto>{
+ const connection=await pool.getConnection();
+ try{
+  await connection.beginTransaction();
+  const[members]=await connection.execute<(RowDataPacket&{user_id:string})[]>('SELECT user_id FROM conversation_members WHERE conversation_id=? FOR UPDATE',[conversationId]);
+  if(!members.some(member=>member.user_id===senderId))throw new HttpError(404,'CONVERSATION_NOT_FOUND','Conversation not found');
+  const recipient=members.find(member=>member.user_id!==senderId);
+  if(members.length!==2||!recipient)throw new HttpError(409,'INVALID_CONVERSATION','Conversation must have exactly two members');
+  const[uploads]=await connection.execute<(RowDataPacket&{id:string;storage_key:string;mime_type:string;width:number;height:number;size_bytes:number})[]>('SELECT u.id,u.storage_key,u.mime_type,u.width,u.height,u.size_bytes FROM uploads u WHERE u.id=? AND u.uploaded_by=? AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.image_upload_id=u.id) FOR UPDATE',[imageId,senderId]);
+  const upload=uploads[0];if(!upload)throw new HttpError(404,'IMAGE_NOT_FOUND','Uploaded image not found or already used');
+  const id=randomUUID();
+  await connection.execute('INSERT INTO messages (id,conversation_id,sender_id,message_type,content,image_upload_id) VALUES (?,?,?,\'IMAGE\',\'\',?)',[id,conversationId,senderId,imageId]);
+  await connection.execute('INSERT INTO message_receipts (message_id,user_id) VALUES (?,?)',[id,recipient.user_id]);
+  await connection.execute('UPDATE conversations SET updated_at=CURRENT_TIMESTAMP(3) WHERE id=?',[conversationId]);
+  const[rows]=await connection.execute<MessageRow[]>(`SELECT m.id,m.conversation_id,m.sender_id,m.message_type,m.content,m.created_at,m.updated_at,'SENT' AS status,NULL AS delivered_at,NULL AS read_at,u.id AS image_id,u.mime_type,u.width,u.height,u.size_bytes FROM messages m JOIN uploads u ON u.id=m.image_upload_id WHERE m.id=?`,[id]);
+  const row=rows[0];if(!row)throw new Error('Persisted image message could not be loaded');
+  await connection.commit();return toMessage(row);
+ }catch(error){await connection.rollback();throw error;}finally{connection.release();}
+}
+
 export async function listMessages(userId:string,conversationId:string,page:number,limit:number){
  if(!(await isConversationMember(userId,conversationId)))throw new HttpError(404,'CONVERSATION_NOT_FOUND','Conversation not found');
  const [count]=await pool.execute<(RowDataPacket&{total:number})[]>('SELECT COUNT(*) AS total FROM messages WHERE conversation_id=?',[conversationId]);
- const [rows]=await pool.execute<MessageRow[]>(`SELECT m.id,m.conversation_id,m.sender_id,m.message_type,m.content,m.created_at,m.updated_at,CASE WHEN r.read_at IS NOT NULL THEN 'READ' WHEN r.delivered_at IS NOT NULL THEN 'DELIVERED' ELSE 'SENT' END AS status,r.delivered_at,r.read_at FROM messages m LEFT JOIN message_receipts r ON r.message_id=m.id AND r.user_id<>m.sender_id WHERE m.conversation_id=? ORDER BY m.created_at DESC,m.id DESC LIMIT ? OFFSET ?`,[conversationId,limit,(page-1)*limit]);
+ const [rows]=await pool.execute<MessageRow[]>(`SELECT m.id,m.conversation_id,m.sender_id,m.message_type,m.content,m.created_at,m.updated_at,CASE WHEN r.read_at IS NOT NULL THEN 'READ' WHEN r.delivered_at IS NOT NULL THEN 'DELIVERED' ELSE 'SENT' END AS status,r.delivered_at,r.read_at,u.id AS image_id,u.mime_type,u.width,u.height,u.size_bytes FROM messages m LEFT JOIN message_receipts r ON r.message_id=m.id AND r.user_id<>m.sender_id LEFT JOIN uploads u ON u.id=m.image_upload_id WHERE m.conversation_id=? ORDER BY m.created_at DESC,m.id DESC LIMIT ? OFFSET ?`,[conversationId,limit,(page-1)*limit]);
  const total=Number(count[0]?.total??0);return {messages:rows.reverse().map(toMessage),pagination:{page,limit,total,totalPages:Math.ceil(total/limit)}};
 }
 

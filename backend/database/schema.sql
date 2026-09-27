@@ -48,3 +48,5 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
   CONSTRAINT fk_refresh_session FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+-- Phase 3 and Phase 4 tables are applied by their ordered SQL migrations.
+

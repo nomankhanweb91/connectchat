@@ -1,6 +1,7 @@
 export type MessageStatus='SENT'|'DELIVERED'|'READ';
+export interface MessageImageDto { id:string; url:string; mimeType:string; width:number; height:number; sizeBytes:number; }
 export interface ConversationUserDto { id:string; username:string; name:string; profileImageUrl:string|null; isVerified:boolean; }
-export interface MessageDto { id:string; conversationId:string; senderId:string; messageType:'TEXT'; content:string; createdAt:Date; updatedAt:Date; status:MessageStatus; deliveredAt:Date|null; readAt:Date|null; }
+export interface MessageDto { id:string; conversationId:string; senderId:string; messageType:'TEXT'|'IMAGE'; content:string; image?:MessageImageDto; createdAt:Date; updatedAt:Date; status:MessageStatus; deliveredAt:Date|null; readAt:Date|null; }
 export interface ConversationSummaryDto { conversationId:string; otherUser:ConversationUserDto; lastMessage:MessageDto|null; lastMessageAt:Date|null; unreadCount:number; }
 export interface ConversationDto { conversationId:string; otherUser:ConversationUserDto; createdAt:Date; updatedAt:Date; }
 export type Ack<T>={success:true;data:T}|{success:false;error:{code:string;message:string}};

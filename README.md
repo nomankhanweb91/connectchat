@@ -1,6 +1,6 @@
-# ConnectChat backend (Phases 1–3)
+# ConnectChat backend (Phases 1–4)
 
-Backend foundation for registration, authentication, profile management, authenticated user discovery, and real-time one-to-one text messaging. Media upload, blocking/reporting, client apps and an admin UI remain out of scope.
+Backend foundation for registration, authentication, profile management, authenticated user discovery, and real-time one-to-one text and image messaging. Blocking/reporting, client apps and an admin UI remain out of scope.
 
 ## Requirements
 
@@ -18,7 +18,7 @@ cp .env.example .env
 
 Set every value in `.env`, especially `DATABASE_PASSWORD`, `JWT_SECRET`, and `REFRESH_TOKEN_SECRET`. Generate independent secrets with `openssl rand -base64 48` or a password manager; each JWT/refresh secret must be at least 32 characters. Never commit `.env`.
 
-Environment variables: `NODE_ENV`, `PORT`, `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_NAME`, `DATABASE_USER`, `DATABASE_PASSWORD`, `JWT_SECRET`, `JWT_EXPIRES_IN`, `REFRESH_TOKEN_SECRET`, `REFRESH_TOKEN_EXPIRES_IN`, `CORS_ORIGIN` (comma-separated exact origins), `BCRYPT_ROUNDS` (10–15), and `ONLINE_THRESHOLD_MINUTES` (1–1440, default 5).
+Environment variables: `NODE_ENV`, `PORT`, `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_NAME`, `DATABASE_USER`, `DATABASE_PASSWORD`, `JWT_SECRET`, `JWT_EXPIRES_IN`, `REFRESH_TOKEN_SECRET`, `REFRESH_TOKEN_EXPIRES_IN`, `CORS_ORIGIN` (comma-separated exact origins), `BCRYPT_ROUNDS` (10–15), `ONLINE_THRESHOLD_MINUTES` (1–1440, default 5), `MAX_IMAGE_SIZE_MB` (1–50, default 10), `IMAGE_UPLOADS_PER_15_MINUTES` (1–100 per authenticated user, default 10), and `UPLOAD_STORAGE_DIR` (provider root, default `var/uploads`).
 
 ## Run
 
@@ -58,6 +58,9 @@ All successful responses use `{ "success": true, "data": ..., "message": "..." }
 | GET | `/api/conversations/:conversationId` | Bearer access token | Conversation details for a member |
 | GET | `/api/conversations/:conversationId/messages?page=1&limit=30` | Bearer access token | Bounded, chronological page of message history (newest page first) |
 | POST | `/api/conversations/:conversationId/messages` | Bearer access token | Persist and publish a text message |
+| POST | `/api/conversations/:conversationId/messages/image` | Bearer access token, multipart `image` | Validate, persist, and publish an image message atomically |
+| POST | `/api/uploads/images` | Bearer access token, multipart `image` | Store an image for a later image-message send |
+| GET | `/api/uploads/images/:id` | Bearer access token | Stream image bytes only to its uploader before sending or conversation members after sending |
 | POST | `/api/conversations/:conversationId/messages/:messageId/read` | Bearer access token | Mark a received message as read |
 
 ### User directory
@@ -118,17 +121,19 @@ Express and Socket.IO share one Node HTTP server. MySQL remains the source of tr
 
 - `conversations`, with a canonical ordered participant pair and unique constraint so A+B and B+A resolve to one conversation.
 - `conversation_members`, the authorization and room membership relation (the service creates exactly two members).
-- `messages`, currently restricted to `TEXT` content up to 4,000 characters.
+- `messages`, supporting `TEXT` content up to 4,000 characters and `IMAGE` rows that reference an upload.
 - `message_receipts`, one recipient receipt per message, with nullable `delivered_at` and `read_at` timestamps.
+- Phase 4 `uploads`, containing metadata and generated storage keys; image bytes remain in the configured storage provider, never in MySQL.
 
 Apply migrations in order to an existing Phase 2 database:
 
 ```sh
 mysql -u root -p connectchat < backend/database/migrations/phase2_user_directory_online_index.sql
 mysql -u root -p connectchat < backend/database/migrations/phase3_messaging.sql
+mysql -u root -p connectchat < backend/database/migrations/phase4_image_messaging.sql
 ```
 
-The Phase 2 index migration is needed only if it was not applied already. Fresh databases can import `backend/database/schema.sql` and then apply the Phase 3 migration. Migrations are explicit SQL; startup does not mutate the schema.
+The Phase 2 index migration is needed only if it was not applied already. Fresh databases can import `backend/database/schema.sql` (which includes the Phase 2 index) and then apply the Phase 3 and Phase 4 migrations. For an existing Phase 1 database, apply Phase 2 first, then Phase 3 and Phase 4. Migrations are explicit SQL; startup does not mutate the schema.
 
 ### REST and pagination
 
@@ -194,13 +199,33 @@ Presence tracks all active sockets per user in this process, so disconnecting on
 7. When a recipient handles a new live or history-loaded message, emit `message:delivered`; when it is opened, emit `message:read`.
 8. On reconnect, rejoin authorized rooms, fetch history from the last seen page/message, and acknowledge delivery for newly received messages.
 
-`typing:start` / `typing:stop` are ephemeral room events and are not persisted. No group, image, file, block, report, or client-app features are included in this phase.
+`typing:start` / `typing:stop` are ephemeral room events and are not persisted. Group chat, arbitrary files, block/report, and client-app features remain out of scope.
+
+### Image messaging (Phase 4)
+
+Only JPEG/JPG, PNG, and WebP are accepted. The default upload limit is 10 MiB (configurable with `MAX_IMAGE_SIZE_MB`). Multer writes to the operating system temporary directory with a strict streaming size/count limit; Sharp decodes the image to verify actual format and dimensions (maximum 40 million pixels and 12,000 pixels per side). The MIME type and filename extension must agree with decoded content. SVG and all other document/executable types are rejected. Uploads are limited per authenticated account by `IMAGE_UPLOADS_PER_15_MINUTES` (default 10 per 15 minutes per process).
+
+Send a message directly with one multipart request; the server checks conversation membership before accepting the image, validates and stores it, commits image metadata/message/receipt, and only then emits the existing `message:new` event. If persistence fails after storing, it removes the unattached metadata and attempts to delete the stored object:
+
+```http
+POST /api/conversations/<conversation-uuid>/messages/image
+Authorization: Bearer <access-token>
+Content-Type: multipart/form-data; boundary=...
+
+image=<binary image file>
+```
+
+Alternatively, `POST /api/uploads/images` accepts the same multipart `image` field and stores an unattached image. The uploader may later submit its returned `id` as `{ "imageId": "..." }` (JSON) to the image-message endpoint. Unattached uploads can be viewed only by their uploader and can be cleaned up through the future media lifecycle work.
+
+`GET /api/uploads/images/:id` streams bytes after checking the caller is the uploader (unattached) or a conversation member (attached). It does not expose a filesystem path and never serves a public/static directory. Message DTOs use `messageType: "IMAGE"`, empty `content`, and a safe `image` object (`id`, authorized API `url`, MIME type, dimensions, and size). The recipient receives the same shape through `message:new`, and conversation history and last-message summaries include it. Clients should use the access token when requesting the image URL.
+
+Storage is behind `StorageProvider` / `StorageService`; the development provider is local filesystem storage rooted at `UPLOAD_STORAGE_DIR` (default `var/uploads`, ignored by Git). Keys are server-generated UUIDs with validated extensions. Configure `UPLOAD_STORAGE_DIR` to an appropriate private persistent volume in production. A Hostinger/VPS or object-storage provider can implement the same interface without changing message services; the repository does not assume a provider-specific path. Keep that directory outside the web root, restrict filesystem permissions, back it up as needed, and use HTTPS in deployment.
 
 Username comparison is case-insensitive under the database collation. SQL statements are parameterized. Authentication routes have a stricter rate limit; JSON bodies are capped at 32 KB.
 
 ## Tests
 
-`npm test` runs request validation and HTTP boundary tests; MySQL-backed auth and directory suites are skipped by default. They cover registration/login, profile operations, directory auth, self-exclusion, username/name search, filters, online status, pagination, public profile, response privacy, and invalid parameters. To run them, create a disposable database whose name ends in `_test` (for example `connectchat_test`), import the schema, configure test-only DB credentials, and set `RUN_MYSQL_INTEGRATION=true` before `npm test`. The runner refuses integration tests for a database name that does not end in `test`. Never point tests at production data.
+`npm test` runs request validation and HTTP boundary tests; MySQL-backed auth, directory, messaging, and image suites are skipped by default. They cover registration/login, profile operations, directory auth, self-exclusion, filters, online status, pagination, messaging authorization and receipts, image validation/storage/access/history/socket events, and invalid parameters. To run them, create a disposable database whose name ends in `_test` (for example `connectchat_test`), import the schema and apply all migrations, configure test-only DB credentials plus a temporary `UPLOAD_STORAGE_DIR`, and set `RUN_MYSQL_INTEGRATION=true` before `npm test`. The runner refuses integration tests for a database name that does not end in `test`. Never point tests at production data.
 
 ## Admin setup
 

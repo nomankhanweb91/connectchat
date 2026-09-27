@@ -8,6 +8,7 @@ import { checkDatabase } from './config/database';
 import { authRouter } from './routes/auth.routes';
 import { usersRouter } from './routes/users.routes';
 import { conversationsRouter } from './routes/conversations.routes';
+import { uploadsRouter } from './routes/uploads.routes';
 import { asyncHandler } from './utils/async-handler';
 import { success } from './utils/response';
 import { HttpError } from './utils/http-error';
@@ -26,6 +27,7 @@ const authLimiter=rateLimit({windowMs:15*60*1000,limit:10,standardHeaders:true,l
 app.use('/api/auth',authLimiter,authRouter);
 app.use('/api/users',usersRouter);
 app.use('/api/conversations',conversationsRouter);
+app.use('/api/uploads',uploadsRouter);
 app.use((_req,_res,next)=>next(new HttpError(404,'NOT_FOUND','Route not found')));
 app.use(errorHandler);
 
