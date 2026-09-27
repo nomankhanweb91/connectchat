@@ -1,13 +1,19 @@
 import { Router } from 'express';
 import { deleteMeController, listUsersController, meController, publicProfileController, updateMeController } from '../controllers/users.controller';
 import { authenticate } from '../middleware/authenticate';
+import { optionalAuthenticate } from '../middleware/optional-authenticate';
 import { validate } from '../middleware/validate';
 import { listingSchema, profileSchema } from '../schemas/auth.schema';
 import { asyncHandler } from '../utils/async-handler';
+import { userIdParamsSchema,blockListQuerySchema } from '../schemas/moderation.schema';
+import { blockActionLimiter } from '../middleware/abuse-rate-limits';
+import { blockUserController,listBlockedUsersController,unblockUserController } from '../controllers/moderation.controller';
 export const usersRouter=Router();
 usersRouter.get('/me',authenticate,asyncHandler(meController));
 usersRouter.put('/me',authenticate,validate(profileSchema),asyncHandler(updateMeController));
 usersRouter.delete('/me',authenticate,asyncHandler(deleteMeController));
-usersRouter.get('/:id',asyncHandler(publicProfileController));
+usersRouter.get('/blocked',authenticate,validate(blockListQuerySchema,'query'),asyncHandler(listBlockedUsersController));
+usersRouter.post('/:userId/block',authenticate,blockActionLimiter,validate(userIdParamsSchema,'params'),asyncHandler(blockUserController));
+usersRouter.delete('/:userId/block',authenticate,blockActionLimiter,validate(userIdParamsSchema,'params'),asyncHandler(unblockUserController));
+usersRouter.get('/:id',optionalAuthenticate,asyncHandler(publicProfileController));
 usersRouter.get('/',authenticate,validate(listingSchema,'query'),asyncHandler(listUsersController));
-

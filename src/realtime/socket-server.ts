@@ -4,6 +4,7 @@ import type { Socket } from 'socket.io';
 import { z } from 'zod';
 import type { ClientToServerEvents, InterServerEvents, MessageDto, ServerToClientEvents, SocketData, Ack } from '../types/messaging.dto';
 import { env } from '../config/env';
+import { notBlockedBetweenSql } from '../services/blocks-check.service';
 import { pool } from '../config/database';
 import { verifyAccessToken } from '../services/access-token';
 import { createMessage, markMessageDelivered, markMessageRead } from '../services/messages.service';
@@ -22,10 +23,11 @@ function acknowledge<T>(ack:((result:Ack<T>)=>void)|undefined,result:Ack<T>){if(
 function success<T>(ack:((result:Ack<T>)=>void)|undefined,data:T){acknowledge(ack,{success:true,data});}
 function failure<T>(ack:((result:Ack<T>)=>void)|undefined,error:unknown){acknowledge(ack,{success:false,error:socketError(error)});}
 function validPayload<T>(schema:z.ZodType<T>,payload:unknown):T{const result=schema.safeParse(payload);if(!result.success)throw new HttpError(400,'VALIDATION_ERROR',result.error.issues.map(issue=>`${issue.path.join('.')}: ${issue.message}`).join('; '));return result.data;}
-function allowMessage(userId:string):boolean{const now=Date.now();const recent=(messageWindows.get(userId)??[]).filter(time=>time>now-60_000);if(recent.length>=30){messageWindows.set(userId,recent);return false;}recent.push(now);messageWindows.set(userId,recent);return true;}
+function allowMessage(userId:string):boolean{const now=Date.now();const recent=(messageWindows.get(userId)??[]).filter(time=>time>now-60_000);if(recent.length>=env.MESSAGE_SENDS_PER_MINUTE){messageWindows.set(userId,recent);return false;}recent.push(now);messageWindows.set(userId,recent);return true;}
 
 export function emitMessageNew(message:MessageDto):void{ioInstance?.to(roomName(message.conversationId)).emit('message:new',message);}
 export function emitMessageRead(receipt:{conversationId:string;messageId:string;status:'READ';readAt:Date|null},readerId:string):void{ioInstance?.to(roomName(receipt.conversationId)).emit('message:read',{...receipt,readerId});}
+export function evictConversationRoom(conversationId:string):void{const room=roomName(conversationId);ioInstance?.in(room).socketsLeave(room);}
 
 async function authorizeConversation(socket:AppSocket,conversationId:string):Promise<void>{if(!(await isConversationMember(socket.data.user.id,conversationId)))throw new HttpError(404,'CONVERSATION_NOT_FOUND','Conversation not found');}
 
@@ -48,11 +50,10 @@ export function attachSocketServer(httpServer:HttpServer):Server<ClientToServerE
 }
 
 async function onConnect(socket:AppSocket,io:Server<ClientToServerEvents,ServerToClientEvents,InterServerEvents,SocketData>):Promise<void>{
- try{const[rows]=await pool.execute<(import('mysql2').RowDataPacket&{conversation_id:string})[]>('SELECT conversation_id FROM conversation_members WHERE user_id=?',[socket.data.user.id]);if(!socket.connected)return;const roomIds=rows.map(row=>row.conversation_id);await socket.join(roomIds.map(roomName));if(!socket.connected)return;let sockets=activeSockets.get(socket.data.user.id);const becameOnline=!sockets||sockets.size===0;if(!sockets){sockets=new Set<string>();activeSockets.set(socket.data.user.id,sockets);}sockets.add(socket.id);await pool.execute('UPDATE users SET last_seen=CURRENT_TIMESTAMP(3) WHERE id=? AND is_active=1',[socket.data.user.id]);const[lastSeen]=await pool.execute<(import('mysql2').RowDataPacket&{last_seen:Date|null})[]>('SELECT last_seen FROM users WHERE id=?',[socket.data.user.id]);if(becameOnline)for(const id of roomIds)io.to(roomName(id)).emit('presence:update',{userId:socket.data.user.id,isOnline:true,lastSeen:lastSeen[0]?.last_seen??new Date()});}catch{socket.disconnect(true);}
+ try{const[rows]=await pool.execute<(import('mysql2').RowDataPacket&{conversation_id:string})[]>(`SELECT mine.conversation_id FROM conversation_members mine JOIN conversation_members other ON other.conversation_id=mine.conversation_id AND other.user_id<>mine.user_id WHERE mine.user_id=? AND ${notBlockedBetweenSql('mine.user_id','other.user_id')}`,[socket.data.user.id]);if(!socket.connected)return;const roomIds=rows.map(row=>row.conversation_id);await socket.join(roomIds.map(roomName));if(!socket.connected)return;let sockets=activeSockets.get(socket.data.user.id);const becameOnline=!sockets||sockets.size===0;if(!sockets){sockets=new Set<string>();activeSockets.set(socket.data.user.id,sockets);}sockets.add(socket.id);await pool.execute('UPDATE users SET last_seen=CURRENT_TIMESTAMP(3) WHERE id=? AND is_active=1',[socket.data.user.id]);const[lastSeen]=await pool.execute<(import('mysql2').RowDataPacket&{last_seen:Date|null})[]>('SELECT last_seen FROM users WHERE id=?',[socket.data.user.id]);if(becameOnline)for(const id of roomIds)io.to(roomName(id)).emit('presence:update',{userId:socket.data.user.id,isOnline:true,lastSeen:lastSeen[0]?.last_seen??new Date()});}catch{socket.disconnect(true);}
 }
 
 async function onDisconnect(socket:AppSocket,io:Server<ClientToServerEvents,ServerToClientEvents,InterServerEvents,SocketData>):Promise<void>{
  const sockets=activeSockets.get(socket.data.user.id);if(!sockets)return;sockets.delete(socket.id);if(sockets.size>0)return;activeSockets.delete(socket.data.user.id);messageWindows.delete(socket.data.user.id);
- try{await pool.execute('UPDATE users SET last_seen=CURRENT_TIMESTAMP(3) WHERE id=?',[socket.data.user.id]);const[rows]=await pool.execute<(import('mysql2').RowDataPacket&{conversation_id:string;last_seen:Date|null})[]>('SELECT cm.conversation_id,u.last_seen FROM conversation_members cm JOIN users u ON u.id=cm.user_id WHERE cm.user_id=?',[socket.data.user.id]);const lastSeen=rows[0]?.last_seen??new Date();for(const row of rows)io.to(roomName(row.conversation_id)).emit('presence:update',{userId:socket.data.user.id,isOnline:false,lastSeen});}catch{/* The next authenticated HTTP request refreshes last_seen if the database is temporarily unavailable. */}
+ try{await pool.execute('UPDATE users SET last_seen=CURRENT_TIMESTAMP(3) WHERE id=?',[socket.data.user.id]);const[rows]=await pool.execute<(import('mysql2').RowDataPacket&{conversation_id:string;last_seen:Date|null})[]>(`SELECT mine.conversation_id,u.last_seen FROM conversation_members mine JOIN conversation_members other ON other.conversation_id=mine.conversation_id AND other.user_id<>mine.user_id JOIN users u ON u.id=mine.user_id WHERE mine.user_id=? AND ${notBlockedBetweenSql('mine.user_id','other.user_id')}`,[socket.data.user.id]);const lastSeen=rows[0]?.last_seen??new Date();for(const row of rows)io.to(roomName(row.conversation_id)).emit('presence:update',{userId:socket.data.user.id,isOnline:false,lastSeen});}catch{/* The next authenticated HTTP request refreshes last_seen if the database is temporarily unavailable. */}
 }
-

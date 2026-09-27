@@ -8,6 +8,7 @@ import { env } from '../config/env';
 import { imageFormats, validateImageFilename, type ImageFormat } from '../schemas/uploads.schema';
 import { storageService } from '../storage/storage-service';
 import { HttpError } from '../utils/http-error';
+import { isConversationMember } from './conversations.service';
 
 export interface ImageDto { id:string; url:string; mimeType:string; width:number; height:number; sizeBytes:number; }
 export interface StoredUpload extends ImageDto { storageKey:string; originalFilename:string; uploadedBy:string; }
@@ -44,8 +45,7 @@ export async function removeUnattachedUpload(userId:string,id:string):Promise<vo
 export async function getAuthorizedImage(userId:string,id:string){
   const[rows]=await pool.execute<(RowDataPacket&{storage_key:string;mime_type:string;size_bytes:number;conversation_id:string|null;uploaded_by:string})[]>('SELECT u.storage_key,u.mime_type,u.size_bytes,u.uploaded_by,m.conversation_id FROM uploads u LEFT JOIN messages m ON m.image_upload_id=u.id WHERE u.id=?',[id]);
   const image=rows[0];if(!image)throw new HttpError(404,'IMAGE_NOT_FOUND','Image not found');
-  if(image.conversation_id){const[members]=await pool.execute<(RowDataPacket&{present:number})[]>('SELECT 1 AS present FROM conversation_members WHERE conversation_id=? AND user_id=?',[image.conversation_id,userId]);if(!members.length)throw new HttpError(404,'IMAGE_NOT_FOUND','Image not found');}
+  if(image.conversation_id){if(!(await isConversationMember(userId,image.conversation_id)))throw new HttpError(404,'IMAGE_NOT_FOUND','Image not found');}
   else if(image.uploaded_by!==userId)throw new HttpError(404,'IMAGE_NOT_FOUND','Image not found');
   return {storageKey:image.storage_key,mimeType:image.mime_type,sizeBytes:Number(image.size_bytes)};
 }
-

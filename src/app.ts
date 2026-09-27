@@ -8,6 +8,7 @@ import { checkDatabase } from './config/database';
 import { authRouter } from './routes/auth.routes';
 import { usersRouter } from './routes/users.routes';
 import { conversationsRouter } from './routes/conversations.routes';
+import { reportsRouter } from './routes/reports.routes';
 import { uploadsRouter } from './routes/uploads.routes';
 import { asyncHandler } from './utils/async-handler';
 import { success } from './utils/response';
@@ -28,6 +29,6 @@ app.use('/api/auth',authLimiter,authRouter);
 app.use('/api/users',usersRouter);
 app.use('/api/conversations',conversationsRouter);
 app.use('/api/uploads',uploadsRouter);
+app.use('/api/reports',reportsRouter);
 app.use((_req,_res,next)=>next(new HttpError(404,'NOT_FOUND','Route not found')));
 app.use(errorHandler);
-

@@ -5,5 +5,4 @@ export async function meController(req:Request,res:Response){success(res,await g
 export async function updateMeController(req:Request,res:Response){success(res,await updateMe(req.user!.id,req.body),'Profile updated');}
 export async function deleteMeController(req:Request,res:Response){await deactivateMe(req.user!.id);res.clearCookie('refreshToken',{httpOnly:true,secure:process.env.NODE_ENV==='production',sameSite:'strict',path:'/api/auth'});success(res,{},'Account deactivated');}
 export async function listUsersController(req:Request,res:Response){success(res,await listUsers(req.user!.id,res.locals.validatedQuery as {search?:string;country?:string;city?:string;gender?:string;online?:boolean;page:number;limit:number}),'Users fetched successfully');}
-export async function publicProfileController(req:Request,res:Response){success(res,await getPublicProfile(req.params.id!),'User profile fetched successfully');}
-
+export async function publicProfileController(req:Request,res:Response){success(res,await getPublicProfile(req.params.id!,req.user?.id),'User profile fetched successfully');}
