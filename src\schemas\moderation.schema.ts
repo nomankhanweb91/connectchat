@@ -1,0 +1,10 @@
+import { z } from 'zod';
+const uuid=z.string().uuid().transform(value=>value.toLowerCase());
+export const userIdParamsSchema=z.object({userId:uuid});
+export const blockListQuerySchema=z.object({page:z.coerce.number().int().min(1).max(10_000).default(1),limit:z.coerce.number().int().min(1).max(100).default(30)});
+export const reportReasons=['SPAM','HARASSMENT','SCAM','ABUSIVE_CONTENT','INAPPROPRIATE_CONTENT','IMPERSONATION','OTHER'] as const;
+const reason=z.enum(reportReasons);
+const description=z.string().trim().min(1).max(2000).optional();
+export const reportUserSchema=z.object({userId:uuid,reason,description}).strict();
+export const reportMessageSchema=z.object({messageId:uuid,reason,description}).strict();
+export const reportListQuerySchema=z.object({page:z.coerce.number().int().min(1).max(10_000).default(1),limit:z.coerce.number().int().min(1).max(100).default(30)});

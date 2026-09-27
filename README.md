@@ -1,6 +1,6 @@
-# ConnectChat backend (Phases 1–4)
+# ConnectChat backend (Phases 1–5)
 
-Backend foundation for registration, authentication, profile management, authenticated user discovery, and real-time one-to-one text and image messaging. Blocking/reporting, client apps and an admin UI remain out of scope.
+Backend foundation for registration, authentication, profile management, authenticated user discovery, real-time one-to-one text and image messaging, user blocking, and abuse reporting. Client apps and an admin UI remain out of scope.
 
 ## Requirements
 
@@ -18,7 +18,7 @@ cp .env.example .env
 
 Set every value in `.env`, especially `DATABASE_PASSWORD`, `JWT_SECRET`, and `REFRESH_TOKEN_SECRET`. Generate independent secrets with `openssl rand -base64 48` or a password manager; each JWT/refresh secret must be at least 32 characters. Never commit `.env`.
 
-Environment variables: `NODE_ENV`, `PORT`, `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_NAME`, `DATABASE_USER`, `DATABASE_PASSWORD`, `JWT_SECRET`, `JWT_EXPIRES_IN`, `REFRESH_TOKEN_SECRET`, `REFRESH_TOKEN_EXPIRES_IN`, `CORS_ORIGIN` (comma-separated exact origins), `BCRYPT_ROUNDS` (10–15), `ONLINE_THRESHOLD_MINUTES` (1–1440, default 5), `MAX_IMAGE_SIZE_MB` (1–50, default 10), `IMAGE_UPLOADS_PER_15_MINUTES` (1–100 per authenticated user, default 10), and `UPLOAD_STORAGE_DIR` (provider root, default `var/uploads`).
+Environment variables: `NODE_ENV`, `PORT`, `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_NAME`, `DATABASE_USER`, `DATABASE_PASSWORD`, `JWT_SECRET`, `JWT_EXPIRES_IN`, `REFRESH_TOKEN_SECRET`, `REFRESH_TOKEN_EXPIRES_IN`, `CORS_ORIGIN` (comma-separated exact origins), `BCRYPT_ROUNDS` (10–15), `ONLINE_THRESHOLD_MINUTES` (1–1440, default 5), `MAX_IMAGE_SIZE_MB` (1–50, default 10), `IMAGE_UPLOADS_PER_15_MINUTES` (1–100 per authenticated user, default 10), `UPLOAD_STORAGE_DIR` (provider root, default `var/uploads`), `BLOCK_ACTIONS_PER_HOUR` (default 60), `REPORTS_PER_HOUR` (default 20), and `MESSAGE_SENDS_PER_MINUTE` (default 30). Abuse limits are per account and process; configure a shared rate-limit store before running multiple API instances.
 
 ## Run
 
@@ -62,6 +62,12 @@ All successful responses use `{ "success": true, "data": ..., "message": "..." }
 | POST | `/api/uploads/images` | Bearer access token, multipart `image` | Store an image for a later image-message send |
 | GET | `/api/uploads/images/:id` | Bearer access token | Stream image bytes only to its uploader before sending or conversation members after sending |
 | POST | `/api/conversations/:conversationId/messages/:messageId/read` | Bearer access token | Mark a received message as read |
+| POST | `/api/users/:userId/block` | Bearer access token | Block a user; repeating the request is idempotent |
+| DELETE | `/api/users/:userId/block` | Bearer access token | Remove the caller's block; removing a missing block is safe |
+| GET | `/api/users/blocked?page=1&limit=30` | Bearer access token | List only the caller's blocked users |
+| POST | `/api/reports/user` | Bearer access token | Report an active user |
+| POST | `/api/reports/message` | Bearer access token | Report a message the caller can currently access |
+| GET | `/api/reports/mine?page=1&limit=30` | Bearer access token | List only reports created by the caller |
 
 ### User directory
 
@@ -131,9 +137,10 @@ Apply migrations in order to an existing Phase 2 database:
 mysql -u root -p connectchat < backend/database/migrations/phase2_user_directory_online_index.sql
 mysql -u root -p connectchat < backend/database/migrations/phase3_messaging.sql
 mysql -u root -p connectchat < backend/database/migrations/phase4_image_messaging.sql
+mysql -u root -p connectchat < backend/database/migrations/phase5_moderation.sql
 ```
 
-The Phase 2 index migration is needed only if it was not applied already. Fresh databases can import `backend/database/schema.sql` (which includes the Phase 2 index) and then apply the Phase 3 and Phase 4 migrations. For an existing Phase 1 database, apply Phase 2 first, then Phase 3 and Phase 4. Migrations are explicit SQL; startup does not mutate the schema.
+The Phase 2 index migration is needed only if it was not applied already. Fresh databases can import `backend/database/schema.sql` (which includes the Phase 2 index) and then apply Phase 3, Phase 4, and Phase 5 migrations. For an existing Phase 1 database, apply Phase 2 first, then Phase 3, Phase 4, and Phase 5. Migrations are explicit SQL; startup does not mutate the schema.
 
 ### REST and pagination
 
@@ -199,7 +206,7 @@ Presence tracks all active sockets per user in this process, so disconnecting on
 7. When a recipient handles a new live or history-loaded message, emit `message:delivered`; when it is opened, emit `message:read`.
 8. On reconnect, rejoin authorized rooms, fetch history from the last seen page/message, and acknowledge delivery for newly received messages.
 
-`typing:start` / `typing:stop` are ephemeral room events and are not persisted. Group chat, arbitrary files, block/report, and client-app features remain out of scope.
+`typing:start` / `typing:stop` are ephemeral room events and are not persisted. Group chat, arbitrary files, and client-app features remain out of scope.
 
 ### Image messaging (Phase 4)
 
@@ -221,11 +228,21 @@ Alternatively, `POST /api/uploads/images` accepts the same multipart `image` fie
 
 Storage is behind `StorageProvider` / `StorageService`; the development provider is local filesystem storage rooted at `UPLOAD_STORAGE_DIR` (default `var/uploads`, ignored by Git). Keys are server-generated UUIDs with validated extensions. Configure `UPLOAD_STORAGE_DIR` to an appropriate private persistent volume in production. A Hostinger/VPS or object-storage provider can implement the same interface without changing message services; the repository does not assume a provider-specific path. Keep that directory outside the web root, restrict filesystem permissions, back it up as needed, and use HTTPS in deployment.
 
+### Blocking and reports (Phase 5)
+
+`blocks` stores a directional edge: only the blocker can remove that edge. The application treats either edge between two users as a mutual interaction denial. If A blocks B, both A and B are prevented from initiating conversations, sending REST or socket messages, joining the old conversation, reading its history, or viewing attached images. Existing conversation/message records are retained, but conversation lists omit the pair and conversation/image APIs return not found while either directional block exists. Active local Socket.IO room membership is evicted when the block is added; subsequent joins and events are checked against MySQL. Unblocking removes only the caller's edge; access returns only when no reverse edge remains. Repeated block and unblock actions are safe and report whether state changed.
+
+The block list and directory are viewer-specific and require authentication. `GET /api/users/:id` retains its pre-Phase-5 public-profile behavior for anonymous callers, who have no identity for a viewer-specific block check; when a bearer token is supplied, either-direction blocks return the same `404` used for a missing user. The endpoint still returns only the public profile DTO.
+
+`reports` supports USER and MESSAGE targets. Submit JSON such as `{ "userId": "<uuid>", "reason": "SPAM", "description": "Repeated unsolicited messages" }` to `POST /api/reports/user`, or `{ "messageId": "<uuid>", "reason": "HARASSMENT" }` to `POST /api/reports/message`. Reasons are `SPAM`, `HARASSMENT`, `SCAM`, `ABUSIVE_CONTENT`, `INAPPROPRIATE_CONTENT`, `IMPERSONATION`, and `OTHER`. Descriptions are optional, trimmed, and limited to 2,000 characters. Self-reports are rejected. Message reports require current access to the conversation and cannot target your own message; inaccessible IDs return a generic `404`. One user report per reporter/target and one message report per reporter/message are allowed; duplicates return `409 DUPLICATE_REPORT`. Reports start as `OPEN`; the status enum also reserves `REVIEWED`, `RESOLVED`, and `DISMISSED` for future moderation tooling. There are no admin report APIs in this phase.
+
+`GET /api/reports/mine` returns only the authenticated caller's reports and never includes message content. Report creation, block/unblock actions, and REST message sends are limited per authenticated account by `REPORTS_PER_HOUR` (20/hour), `BLOCK_ACTIONS_PER_HOUR` (60/hour), and `MESSAGE_SENDS_PER_MINUTE` (30/minute). Socket message sends share the 30/minute setting; image upload endpoints also retain the Phase 4 upload quota. These limiters use in-memory stores and are per process; use a shared store when deploying multiple API instances.
+
 Username comparison is case-insensitive under the database collation. SQL statements are parameterized. Authentication routes have a stricter rate limit; JSON bodies are capped at 32 KB.
 
 ## Tests
 
-`npm test` runs request validation and HTTP boundary tests; MySQL-backed auth, directory, messaging, and image suites are skipped by default. They cover registration/login, profile operations, directory auth, self-exclusion, filters, online status, pagination, messaging authorization and receipts, image validation/storage/access/history/socket events, and invalid parameters. To run them, create a disposable database whose name ends in `_test` (for example `connectchat_test`), import the schema and apply all migrations, configure test-only DB credentials plus a temporary `UPLOAD_STORAGE_DIR`, and set `RUN_MYSQL_INTEGRATION=true` before `npm test`. The runner refuses integration tests for a database name that does not end in `test`. Never point tests at production data.
+`npm test` runs request validation and HTTP boundary tests; MySQL-backed auth, directory, messaging, image, and moderation suites are skipped by default. They cover registration/profile, directory privacy, message/image access, block enforcement across REST and Socket.IO, report validation/ownership/duplicates, and rate limiting. To run them, create a disposable database whose name ends in `_test` (for example `connectchat_test`), import the schema and apply all migrations, configure test-only DB credentials plus a temporary `UPLOAD_STORAGE_DIR`, and set `RUN_MYSQL_INTEGRATION=true` before `npm test`. The runner refuses integration tests for a database name that does not end in `test`. Never point tests at production data.
 
 ## Admin setup
 
@@ -234,4 +251,3 @@ There is no seeded admin or default password. Promote a verified account only th
 ## Hostinger deployment
 
 This API requires a Node.js-capable Hostinger environment or a VPS (or another Node.js host). Do not assume a shared hosting plan supports persistent Node.js processes. MySQL may be hosted at Hostinger if network access is enabled; restrict the DB user and allowed hosts. Configure environment variables in the hosting control panel, run the build during deployment, use a process manager/reverse proxy with HTTPS, and verify `/api/health` after deployment.
-
