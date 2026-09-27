@@ -6,7 +6,6 @@ export const messageParamsSchema=z.object({conversationId:uuid,messageId:uuid});
 export const messagePageSchema=z.object({page:z.coerce.number().int().min(1).max(10_000).default(1),limit:z.coerce.number().int().min(1).max(100).default(30)});
 export const sendMessageSchema=z.object({messageType:z.literal('TEXT').default('TEXT'),content:z.string().trim().min(1).max(4000)}).strict();
 export const deliveredEventSchema=z.object({messageId:uuid}).strict();
-export const readEventSchema=z.object({conversationId:uuid,messageId:uuid}).strict();
+export const readEventSchema=z.object({conversationId:uuid.optional(),messageId:uuid}).strict();
 export const conversationEventSchema=z.object({conversationId:uuid}).strict();
 export const socketMessageSchema=z.object({conversationId:uuid,messageType:z.literal('TEXT').optional(),content:z.string().trim().min(1).max(4000)}).strict();
-

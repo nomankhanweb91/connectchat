@@ -190,7 +190,7 @@ Do not put refresh tokens in the socket handshake. After `POST /api/conversation
 | Server → members | `message:new` | Persisted message DTO; emitted only after commit |
 | Client → server | `message:delivered` | Recipient sends `{ messageId }` after handling `message:new` |
 | Server → members | `message:delivered` | Emitted after receipt is recorded in MySQL |
-| Client → server | `message:read` | Recipient sends `{ conversationId, messageId }` when the message is read |
+| Client → server | `message:read` | Recipient sends `{ messageId }` when the message is read; `{ conversationId, messageId }` is also accepted for compatibility |
 | Server → members | `message:read` | Emitted after the recipient's read timestamp is persisted |
 | Client → server | `typing:start`, `typing:stop` | `{ conversationId }`; authorized members only; never stored |
 | Server → conversation | `presence:update` | `{ userId, isOnline, lastSeen }` on a user's first socket connect/final disconnect; a joining socket also receives a snapshot for active conversation peers |
@@ -301,4 +301,3 @@ Configure `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` in Hosti
 ### Applying Phase 5 to an existing database
 
 For a database that already has Phases 1–4, select that existing database in phpMyAdmin and import only `backend/database/migrations/phase5_moderation.sql`. It creates the `blocks` and `reports` tables with their indexes and constraints and does not drop tables or modify existing user/message rows. Do not re-import `backend/database/connectchat_hostinger.sql` into an existing database: it is intended for an empty database, and its Phase 4 `ALTER TABLE messages` is a one-time migration. After applying Phase 5, import `backend/database/verify_phase5_schema.sql` in the same selected database to check the required tables, Phase 5 indexes, and constraints. The verification file only reads `information_schema` and makes no changes.
-

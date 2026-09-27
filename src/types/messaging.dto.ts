@@ -10,7 +10,7 @@ export interface ClientToServerEvents {
   'conversation:leave':(payload:{conversationId:string},ack:(result:Ack<{conversationId:string}>)=>void)=>void;
   'message:send':(payload:{conversationId:string;content:string;messageType?:'TEXT'},ack:(result:Ack<MessageDto>)=>void)=>void;
   'message:delivered':(payload:{messageId:string},ack:(result:Ack<{messageId:string;status:'DELIVERED'|'READ';deliveredAt:Date|null;readAt:Date|null}>)=>void)=>void;
-  'message:read':(payload:{conversationId:string;messageId:string},ack:(result:Ack<{messageId:string;status:'READ';readAt:Date|null}>)=>void)=>void;
+  'message:read':(payload:{conversationId?:string;messageId:string},ack:(result:Ack<{messageId:string;status:'READ';readAt:Date|null}>)=>void)=>void;
   'typing:start':(payload:{conversationId:string},ack:(result:Ack<{conversationId:string}>)=>void)=>void;
   'typing:stop':(payload:{conversationId:string},ack:(result:Ack<{conversationId:string}>)=>void)=>void;
 }
@@ -24,4 +24,3 @@ export interface ServerToClientEvents {
 }
 export interface InterServerEvents {}
 export interface SocketData { user:{id:string;username:string;role:'USER'|'ADMIN'}; }
-

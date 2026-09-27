@@ -65,7 +65,12 @@ export async function markMessageDelivered(recipientId:string,messageId:string){
  const [rows]=await pool.execute<(RowDataPacket&{conversation_id:string;delivered_at:Date|null;read_at:Date|null})[]>('SELECT m.conversation_id,r.delivered_at,r.read_at FROM message_receipts r JOIN messages m ON m.id=r.message_id WHERE r.message_id=? AND r.user_id=?',[messageId,recipientId]);const row=rows[0];if(!row)throw new HttpError(404,'MESSAGE_NOT_FOUND','Message not found');return {conversationId:row.conversation_id,messageId,status:row.read_at?'READ' as const:'DELIVERED' as const,deliveredAt:row.delivered_at,readAt:row.read_at};
 }
 
-export async function markMessageRead(userId:string,conversationId:string,messageId:string){
+export function markMessageRead(userId:string,conversationId:string,messageId:string):Promise<{conversationId:string;messageId:string;status:'READ';deliveredAt:Date|null;readAt:Date|null;deliveryWasNew:boolean}>;
+export function markMessageRead(userId:string,messageId:string):Promise<{conversationId:string;messageId:string;status:'READ';deliveredAt:Date|null;readAt:Date|null;deliveryWasNew:boolean}>;
+export async function markMessageRead(userId:string,conversationIdOrMessageId:string,optionalMessageId?:string){
+ const messageId=optionalMessageId??conversationIdOrMessageId;
+ let conversationId=optionalMessageId?conversationIdOrMessageId:undefined;
+ if(!conversationId){const [rows]=await pool.execute<(RowDataPacket&{conversation_id:string})[]>('SELECT m.conversation_id FROM messages m JOIN message_receipts r ON r.message_id=m.id WHERE r.message_id=? AND r.user_id=?',[messageId,userId]);conversationId=rows[0]?.conversation_id;if(!conversationId)throw new HttpError(404,'CONVERSATION_NOT_FOUND','Conversation not found');}
  if(!(await isConversationMember(userId,conversationId)))throw new HttpError(404,'CONVERSATION_NOT_FOUND','Conversation not found');
  const [messages]=await pool.execute<(RowDataPacket&{sender_id:string})[]>('SELECT sender_id FROM messages WHERE id=? AND conversation_id=?',[messageId,conversationId]);const message=messages[0];
  if(!message)throw new HttpError(404,'MESSAGE_NOT_FOUND','Message not found');
