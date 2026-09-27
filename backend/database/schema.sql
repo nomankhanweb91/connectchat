@@ -1,6 +1,3 @@
-CREATE DATABASE IF NOT EXISTS connectchat CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
-USE connectchat;
-
 CREATE TABLE IF NOT EXISTS users (
   id CHAR(36) PRIMARY KEY,
   username VARCHAR(30) NOT NULL,
@@ -49,4 +46,3 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 ) ENGINE=InnoDB;
 
 -- Phase 3 and Phase 4 tables are applied by their ordered SQL migrations.
-
