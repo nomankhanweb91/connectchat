@@ -70,8 +70,18 @@ export async function markMessageRead(userId:string,conversationId:string,messag
  const [messages]=await pool.execute<(RowDataPacket&{sender_id:string})[]>('SELECT sender_id FROM messages WHERE id=? AND conversation_id=?',[messageId,conversationId]);const message=messages[0];
  if(!message)throw new HttpError(404,'MESSAGE_NOT_FOUND','Message not found');
  if(message.sender_id===userId)throw new HttpError(403,'MESSAGE_READ_FORBIDDEN','You cannot mark your own message as read');
- await pool.execute('UPDATE message_receipts SET delivered_at=COALESCE(delivered_at,CURRENT_TIMESTAMP(3)),read_at=COALESCE(read_at,CURRENT_TIMESTAMP(3)) WHERE message_id=? AND user_id=?',[messageId,userId]);
- const [rows]=await pool.execute<(RowDataPacket&{read_at:Date|null})[]>('SELECT read_at FROM message_receipts WHERE message_id=? AND user_id=?',[messageId,userId]);
- if(!rows[0])throw new HttpError(403,'MESSAGE_READ_FORBIDDEN','Only the recipient can mark this message as read');
- return {conversationId,messageId,status:'READ' as const,readAt:rows[0].read_at};
+ const connection=await pool.getConnection();
+ try{
+  await connection.beginTransaction();
+  const [receipts]=await connection.execute<(RowDataPacket&{delivered_at:Date|null})[]>('SELECT delivered_at FROM message_receipts WHERE message_id=? AND user_id=? FOR UPDATE',[messageId,userId]);
+  const receipt=receipts[0];
+  if(!receipt)throw new HttpError(403,'MESSAGE_READ_FORBIDDEN','Only the recipient can mark this message as read');
+  const deliveryWasNew=receipt.delivered_at===null;
+  await connection.execute('UPDATE message_receipts SET delivered_at=COALESCE(delivered_at,CURRENT_TIMESTAMP(3)),read_at=COALESCE(read_at,CURRENT_TIMESTAMP(3)) WHERE message_id=? AND user_id=?',[messageId,userId]);
+  const [rows]=await connection.execute<(RowDataPacket&{delivered_at:Date|null;read_at:Date|null})[]>('SELECT delivered_at,read_at FROM message_receipts WHERE message_id=? AND user_id=?',[messageId,userId]);
+  const updated=rows[0];
+  if(!updated)throw new HttpError(403,'MESSAGE_READ_FORBIDDEN','Only the recipient can mark this message as read');
+  await connection.commit();
+  return {conversationId,messageId,status:'READ' as const,deliveredAt:updated.delivered_at,readAt:updated.read_at,deliveryWasNew};
+ }catch(error){await connection.rollback();throw error;}finally{connection.release();}
 }
