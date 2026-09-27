@@ -193,11 +193,11 @@ Do not put refresh tokens in the socket handshake. After `POST /api/conversation
 | Client → server | `message:read` | Recipient sends `{ conversationId, messageId }` when the message is read |
 | Server → members | `message:read` | Emitted after the recipient's read timestamp is persisted |
 | Client → server | `typing:start`, `typing:stop` | `{ conversationId }`; authorized members only; never stored |
-| Server → conversation | `presence:update` | `{ userId, isOnline, lastSeen }` when a user's first socket connects or final socket disconnects |
+| Server → conversation | `presence:update` | `{ userId, isOnline, lastSeen }` on a user's first socket connect/final disconnect; a joining socket also receives a snapshot for active conversation peers |
 
 Client-to-server events use an acknowledgement with `{ success: true, data }` or `{ success: false, error: { code, message } }`. Message sends are limited to 30 per user per minute per process. A sender's message remains `SENT` until the recipient acknowledges `message:delivered`; a recipient's explicit `message:read` changes it to `READ`. A read receipt also implies delivered. Socket.IO's default transport recovery is paired with durable MySQL history; reconnecting clients should rejoin rooms and request missed messages through the history API.
 
-Presence tracks all active sockets per user in this process, so disconnecting one phone/browser does not mark a user offline while another socket remains connected. `last_seen` is written only when the final socket disconnects, and the Phase 2 `ONLINE_THRESHOLD_MINUTES` rule remains available for directory status. For multiple Node instances, use sticky Socket.IO routing plus a shared Socket.IO adapter and distributed presence store; the current in-memory connection map is process-local.
+Presence tracks all active sockets per user in this process, so disconnecting one phone/browser does not mark a user offline while another socket remains connected. A new room join receives current presence for active conversation peers. Socket connections refresh `last_seen` at connect and final disconnect; authenticated HTTP requests also refresh it. The Phase 2 `ONLINE_THRESHOLD_MINUTES` rule remains available for directory status. For multiple Node instances, use sticky Socket.IO routing plus a shared Socket.IO adapter and distributed presence store; the current in-memory connection map is process-local.
 
 ### Local development client flow
 
@@ -301,3 +301,4 @@ Configure `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` in Hosti
 ### Applying Phase 5 to an existing database
 
 For a database that already has Phases 1–4, select that existing database in phpMyAdmin and import only `backend/database/migrations/phase5_moderation.sql`. It creates the `blocks` and `reports` tables with their indexes and constraints and does not drop tables or modify existing user/message rows. Do not re-import `backend/database/connectchat_hostinger.sql` into an existing database: it is intended for an empty database, and its Phase 4 `ALTER TABLE messages` is a one-time migration. After applying Phase 5, import `backend/database/verify_phase5_schema.sql` in the same selected database to check the required tables, Phase 5 indexes, and constraints. The verification file only reads `information_schema` and makes no changes.
+
