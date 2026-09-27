@@ -23,3 +23,4 @@ export interface ServerToClientEvents {
 }
 export interface InterServerEvents {}
 export interface SocketData { user:{id:string;username:string;role:'USER'|'ADMIN'}; }
+

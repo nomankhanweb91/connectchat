@@ -40,3 +40,4 @@ export async function listConversations(userId:string):Promise<ConversationSumma
 }
 
 export async function listConversationMembers(conversationId:string):Promise<Array<{userId:string}>>{const [rows]=await pool.execute<(RowDataPacket&{user_id:string})[]>('SELECT user_id FROM conversation_members WHERE conversation_id=?',[conversationId]);return rows.map(row=>({userId:row.user_id}));}
+

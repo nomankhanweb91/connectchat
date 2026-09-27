@@ -10,3 +10,4 @@ usersRouter.put('/me',authenticate,validate(profileSchema),asyncHandler(updateMe
 usersRouter.delete('/me',authenticate,asyncHandler(deleteMeController));
 usersRouter.get('/:id',asyncHandler(publicProfileController));
 usersRouter.get('/',authenticate,validate(listingSchema,'query'),asyncHandler(listUsersController));
+

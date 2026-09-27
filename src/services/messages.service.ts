@@ -49,3 +49,4 @@ export async function markMessageRead(userId:string,conversationId:string,messag
  if(!rows[0])throw new HttpError(403,'MESSAGE_READ_FORBIDDEN','Only the recipient can mark this message as read');
  return {conversationId,messageId,status:'READ' as const,readAt:rows[0].read_at};
 }
+

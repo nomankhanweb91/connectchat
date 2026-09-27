@@ -13,3 +13,4 @@ conversationsRouter.post('/:conversationId/messages/:messageId/read',validate(me
 conversationsRouter.get('/:conversationId/messages',validate(conversationParamsSchema,'params'),validate(messagePageSchema,'query'),asyncHandler(listMessagesController));
 conversationsRouter.post('/:conversationId/messages',validate(conversationParamsSchema,'params'),validate(sendMessageSchema),asyncHandler(createMessageController));
 conversationsRouter.get('/:conversationId',validate(conversationParamsSchema,'params'),asyncHandler(getConversationController));
+

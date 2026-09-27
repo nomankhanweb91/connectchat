@@ -1,3 +1,4 @@
 import type { ErrorRequestHandler } from 'express';
 import { HttpError } from '../utils/http-error';
 export const errorHandler:ErrorRequestHandler=(error:unknown,_req,res,_next)=>{if(error instanceof HttpError){res.status(error.status).json({success:false,message:error.message,code:error.code});return;}const e=error as {code?:string;type?:string;message?:string};if(e.type==='entity.parse.failed'){res.status(400).json({success:false,message:'Invalid JSON body',code:'INVALID_JSON'});return;}if(e.type==='entity.too.large'){res.status(413).json({success:false,message:'Request body too large',code:'BODY_TOO_LARGE'});return;}if(e.code==='ER_DUP_ENTRY'){res.status(409).json({success:false,message:'Username is already taken',code:'DUPLICATE_USERNAME'});return;}console.error('Unhandled request error:',e.message??'Unknown error');res.status(500).json({success:false,message:'Internal server error',code:'INTERNAL_ERROR'});};
+

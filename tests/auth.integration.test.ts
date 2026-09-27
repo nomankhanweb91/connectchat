@@ -25,3 +25,4 @@ describe('MySQL-backed authentication and user API',{skip:!enabled},()=>{
  it('revokes the refresh cookie on logout',async()=>{const r=await client.post('/api/auth/logout').send({});assert.equal(r.status,200);assert.equal(r.body.success,true);});
  it('deactivates only the authenticated account',async()=>{const r=await request(app).delete('/api/users/me').set('Authorization',`Bearer ${accessToken}`);assert.equal(r.status,200);const me=await request(app).get('/api/users/me').set('Authorization',`Bearer ${accessToken}`);assert.equal(me.status,401);});
 });
+

@@ -32,3 +32,4 @@ export async function rotateRefresh(raw:string,ip:string|null,ua:string|null){
  }catch(e){await conn.rollback();throw e;}finally{conn.release();}
 }
 export async function revokeRefresh(raw?:string){if(!raw)return;await pool.execute('UPDATE refresh_tokens SET revoked_at=CURRENT_TIMESTAMP(3) WHERE token_hash=? AND revoked_at IS NULL',[digest(raw)]);}
+

@@ -14,3 +14,4 @@ export function onlineStatusPredicate(column: 'last_seen', online: boolean): str
 export function onlineStatusExpression(column: 'last_seen'): string {
   return `CASE WHEN ${onlineStatusPredicate(column, true)} THEN 1 ELSE 0 END`;
 }
+

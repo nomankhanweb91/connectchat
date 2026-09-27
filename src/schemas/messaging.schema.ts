@@ -9,3 +9,4 @@ export const deliveredEventSchema=z.object({messageId:uuid}).strict();
 export const readEventSchema=z.object({conversationId:uuid,messageId:uuid}).strict();
 export const conversationEventSchema=z.object({conversationId:uuid}).strict();
 export const socketMessageSchema=z.object({conversationId:uuid,messageType:z.literal('TEXT').optional(),content:z.string().trim().min(1).max(4000)}).strict();
+

@@ -8,3 +8,4 @@ describe('request validation',()=>{
  it('parses pagination and online filter while enforcing bounds',()=>{assert.deepEqual(listingSchema.safeParse({page:'2',limit:'20',online:'true'}).data,{online:true,page:2,limit:20});assert.equal(listingSchema.safeParse({limit:'1000'}).success,false);assert.equal(listingSchema.safeParse({page:'10001'}).success,false);assert.equal(listingSchema.safeParse({online:'maybe'}).success,false);assert.equal(listingSchema.safeParse({search:'  '}).success,false);});
  it('only permits profile fields and requires an update',()=>{assert.equal(profileSchema.safeParse({city:'Pune'}).success,true);assert.equal(profileSchema.safeParse({username:'changed'}).success,false);assert.equal(profileSchema.safeParse({}).success,false);});
 });
+

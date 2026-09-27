@@ -55,3 +55,4 @@ async function onDisconnect(socket:AppSocket,io:Server<ClientToServerEvents,Serv
  const sockets=activeSockets.get(socket.data.user.id);if(!sockets)return;sockets.delete(socket.id);if(sockets.size>0)return;activeSockets.delete(socket.data.user.id);messageWindows.delete(socket.data.user.id);
  try{await pool.execute('UPDATE users SET last_seen=CURRENT_TIMESTAMP(3) WHERE id=?',[socket.data.user.id]);const[rows]=await pool.execute<(import('mysql2').RowDataPacket&{conversation_id:string;last_seen:Date|null})[]>('SELECT cm.conversation_id,u.last_seen FROM conversation_members cm JOIN users u ON u.id=cm.user_id WHERE cm.user_id=?',[socket.data.user.id]);const lastSeen=rows[0]?.last_seen??new Date();for(const row of rows)io.to(roomName(row.conversation_id)).emit('presence:update',{userId:socket.data.user.id,isOnline:false,lastSeen});}catch{/* The next authenticated HTTP request refreshes last_seen if the database is temporarily unavailable. */}
 }
+

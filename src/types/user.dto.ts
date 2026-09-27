@@ -10,3 +10,4 @@ export interface PublicUserDto {
   isOnline: boolean;
   lastSeen: Date | null;
 }
+

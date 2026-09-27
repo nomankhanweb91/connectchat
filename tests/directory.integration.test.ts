@@ -52,3 +52,4 @@ describe('MySQL-backed user directory and public profiles',{skip:!enabled},()=>{
  it('serves a public profile without authentication and omits private fields',async()=>{const r=await request(app).get(`/api/users/${peerId}`);assert.equal(r.status,200);assert.equal(r.body.data.id,peerId);assert.deepEqual(Object.keys(r.body.data).sort(),['city','country','gender','id','isOnline','isVerified','lastSeen','name','profileImageUrl','username'].sort());});
  it('rejects malformed query values and overlong search terms',async()=>{for(const query of ['online=maybe','page=0','limit=101',`search=${'x'.repeat(101)}`]){const r=await request(app).get(`/api/users?${query}`).set('Authorization',`Bearer ${ownerToken}`);assert.equal(r.status,400,query);}});
 });
+
