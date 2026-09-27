@@ -1,0 +1,12 @@
+import { Router } from 'express';
+import { deleteMeController, listUsersController, meController, updateMeController } from '../controllers/users.controller';
+import { authenticate } from '../middleware/authenticate';
+import { validate } from '../middleware/validate';
+import { listingSchema, profileSchema } from '../schemas/auth.schema';
+import { asyncHandler } from '../utils/async-handler';
+export const usersRouter=Router();
+usersRouter.use(authenticate);
+usersRouter.get('/me',asyncHandler(meController));
+usersRouter.put('/me',validate(profileSchema),asyncHandler(updateMeController));
+usersRouter.delete('/me',asyncHandler(deleteMeController));
+usersRouter.get('/',validate(listingSchema,'query'),asyncHandler(listUsersController));
