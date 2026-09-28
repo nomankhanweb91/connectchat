@@ -48,6 +48,7 @@ All successful responses use `{ "success": true, "data": ..., "message": "..." }
 | Method | Path | Access | Description |
 |---|---|---|---|
 | GET | `/api/health` | Public | Server and DB connectivity |
+| GET | `/api/diagnostics/mysql-tcp` | `x-diagnostic-secret` header | Temporary raw TCP connectivity check to configured MySQL host/port (no MySQL login/query) |
 | POST | `/api/auth/register` | Public, rate limited | Create account; returns user and access token; sets refresh cookie |
 | POST | `/api/auth/login` | Public, rate limited | Authenticate by username/password |
 | POST | `/api/auth/refresh` | Refresh cookie/body | Rotate refresh token and issue access token |
@@ -301,3 +302,13 @@ Configure `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` in Hosti
 ### Applying Phase 5 to an existing database
 
 For a database that already has Phases 1–4, select that existing database in phpMyAdmin and import only `backend/database/migrations/phase5_moderation.sql`. It creates the `blocks` and `reports` tables with their indexes and constraints and does not drop tables or modify existing user/message rows. Do not re-import `backend/database/connectchat_hostinger.sql` into an existing database: it is intended for an empty database, and its Phase 4 `ALTER TABLE messages` is a one-time migration. After applying Phase 5, import `backend/database/verify_phase5_schema.sql` in the same selected database to check the required tables, Phase 5 indexes, and constraints. The verification file only reads `information_schema` and makes no changes.
+
+## Temporary MySQL TCP diagnostic
+
+To test raw TCP reachability to the configured database endpoint without MySQL authentication or a query, temporarily set `MYSQL_TCP_DIAGNOSTIC_SECRET` in Render to a random value of at least 32 characters (for example, generate one with `openssl rand -hex 32`). After deployment, call `GET /api/diagnostics/mysql-tcp` with the value in the `x-diagnostic-secret` header:
+
+```sh
+curl --fail-with-body -H "x-diagnostic-secret: <MYSQL_TCP_DIAGNOSTIC_SECRET>" https://<render-service-host>/api/diagnostics/mysql-tcp
+```
+
+The response contains only the configured host and port, TCP success status, elapsed time, and safe socket error fields on failure. An unset or incorrect secret returns `404`. Remove `MYSQL_TCP_DIAGNOSTIC_SECRET` from Render after the check to disable this endpoint.
