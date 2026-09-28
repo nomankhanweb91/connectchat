@@ -305,10 +305,10 @@ For a database that already has Phases 1–4, select that existing database in p
 
 ## Temporary MySQL TCP diagnostic
 
-To test raw TCP reachability to the configured database endpoint without MySQL authentication or a query, temporarily set `MYSQL_TCP_DIAGNOSTIC_SECRET` in Render to a random value of at least 32 characters (for example, generate one with `openssl rand -hex 32`). After deployment, call `GET /api/diagnostics/mysql-tcp` with the value in the `x-diagnostic-secret` header:
+To test raw TCP reachability to the configured database endpoint without MySQL authentication or a query, temporarily set `MYSQL_TCP_DIAGNOSTIC_SECRET` in Render to a random value of at least 32 characters (for example, generate one with `openssl rand -hex 32`). The variable may be left blank when the endpoint is disabled. After deployment, call `GET /api/diagnostics/mysql-tcp` with the value in the `x-diagnostic-secret` header; the TCP attempt times out after 10 seconds:
 
 ```sh
 curl --fail-with-body -H "x-diagnostic-secret: <MYSQL_TCP_DIAGNOSTIC_SECRET>" https://<render-service-host>/api/diagnostics/mysql-tcp
 ```
 
-The response contains only the configured host and port, TCP success status, elapsed time, and safe socket error fields on failure. An unset or incorrect secret returns `401`. Remove `MYSQL_TCP_DIAGNOSTIC_SECRET` from Render after the check to disable this endpoint.
+The success response contains only `host`, `port`, `success`, and `elapsedMs`. A failure also includes safe socket `name`, `code`, and `message` fields. An unset or incorrect secret returns `401`. Remove `MYSQL_TCP_DIAGNOSTIC_SECRET` from Render after the check to disable this endpoint.
