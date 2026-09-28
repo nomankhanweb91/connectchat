@@ -20,21 +20,30 @@ const roomName=(conversationId:string)=>`conversation:${conversationId}`;
 const genericError={code:'INTERNAL_ERROR',message:'Unable to complete socket request'};
 type PresencePeer=import('mysql2').RowDataPacket&{conversation_id:string;user_id:string;last_seen:Date|null};
 function socketError(error:unknown){return error instanceof HttpError?{code:error.code,message:error.message}:genericError;}
-const sensitiveDiagnosticValue=/\b(password|passwd|secret|token|authorization|cookie|refresh[_-]?token|access[_-]?token|credential|api[_-]?key|private[_-]?key)\b(\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
+const sensitiveDiagnosticValue=/\b(password|passwd|secret|token|authorization|cookie|refresh[_-]?token|access[_-]?token|credential|api[_-]?key|private[_-]?key|username|user)\b(\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
 const diagnosticJwtValue=/\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g;
 const diagnosticBearerValue=/\bBearer\s+[^\s,;]+/gi;
 const diagnosticOpaqueValue=/\b[A-Za-z0-9_-]{48,}\b/g;
 function redactSocketDiagnostic(value:string):string{
  let safe=value;
- for(const[key,secret]of Object.entries(process.env))if(secret&&/(?:PASSWORD|PASSWD|SECRET|TOKEN|COOKIE|AUTHORIZATION|CREDENTIAL|API[_-]?KEY|PRIVATE[_-]?KEY)/i.test(key))safe=safe.split(secret).join('[REDACTED]');
+ for(const[key,secret]of Object.entries(process.env))if(secret&&/(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|COOKIE|AUTHORIZATION|CREDENTIAL|API[_-]?KEY|PRIVATE[_-]?KEY|DATABASE_USER|DB_USER)/i.test(key))safe=safe.split(secret).join('[REDACTED]');
  return safe.replace(diagnosticBearerValue,'Bearer [REDACTED]').replace(diagnosticJwtValue,'[REDACTED_JWT]').replace(sensitiveDiagnosticValue,'$1$2[REDACTED]').replace(diagnosticOpaqueValue,'[REDACTED_TOKEN]');
 }
-function logUnexpectedJoinError(error:unknown,userId:string,conversationId:string|null):void{
- const value=typeof error==='object'&&error!==null?error as {name?:unknown;message?:unknown;stack?:unknown;constructor?:{name?:unknown}}:undefined;
+function socketErrorDetails(error:unknown,depth=0):Record<string,unknown>{
+ const value=typeof error==='object'&&error!==null?error as {name?:unknown;message?:unknown;code?:unknown;errors?:unknown;cause?:unknown;constructor?:{name?:unknown}}:undefined;
  const errorName=error instanceof Error?error.name:typeof value?.name==='string'?value.name:typeof value?.constructor?.name==='string'?value.constructor.name:typeof error;
  const errorMessage=error instanceof Error?error.message:typeof value?.message==='string'?value.message:String(error);
- const stack=error instanceof Error?error.stack:typeof value?.stack==='string'?value.stack:undefined;
- console.error('Unexpected Socket.IO handler error:',{event:'conversation:join',userId,conversationId,errorName:redactSocketDiagnostic(errorName),errorMessage:redactSocketDiagnostic(errorMessage),stack:stack?redactSocketDiagnostic(stack):undefined});
+ const details:Record<string,unknown>={errorName:redactSocketDiagnostic(errorName),errorMessage:redactSocketDiagnostic(errorMessage)};
+ if(typeof value?.code==='string'||typeof value?.code==='number')details.errorCode=redactSocketDiagnostic(String(value.code));
+ if(depth<3){
+  if(Array.isArray(value?.errors))details.errors=value.errors.slice(0,8).map(cause=>socketErrorDetails(cause,depth+1));
+  if(value?.cause!==undefined)details.cause=socketErrorDetails(value.cause,depth+1);
+ }
+ return details;
+}
+function logUnexpectedJoinError(error:unknown,userId:string,conversationId:string|null):void{
+ const stack=error instanceof Error?error.stack:undefined;
+ console.error('Unexpected Socket.IO handler error:',{event:'conversation:join',userId,conversationId,...socketErrorDetails(error),stack:stack?redactSocketDiagnostic(stack):undefined});
 }
 function acknowledge<T>(ack:((result:Ack<T>)=>void)|undefined,result:Ack<T>){if(typeof ack==='function')ack(result);}
 function success<T>(ack:((result:Ack<T>)=>void)|undefined,data:T){acknowledge(ack,{success:true,data});}
