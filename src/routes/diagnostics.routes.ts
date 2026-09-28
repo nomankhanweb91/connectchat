@@ -45,7 +45,7 @@ function checkTcpConnection(host:string,port:number):Promise<Record<string,unkno
 
 router.get('/mysql-tcp',async(req,res)=>{
  if(!matchesDiagnosticSecret(req.get('x-diagnostic-secret'),env.MYSQL_TCP_DIAGNOSTIC_SECRET)){
-  res.status(404).json({success:false,message:'Not found'});
+  res.status(401).json({success:false,message:'Diagnostic secret required or invalid'});
   return;
  }
  const result=await checkTcpConnection(env.DATABASE_HOST,env.DATABASE_PORT);

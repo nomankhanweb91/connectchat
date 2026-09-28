@@ -311,4 +311,4 @@ To test raw TCP reachability to the configured database endpoint without MySQL a
 curl --fail-with-body -H "x-diagnostic-secret: <MYSQL_TCP_DIAGNOSTIC_SECRET>" https://<render-service-host>/api/diagnostics/mysql-tcp
 ```
 
-The response contains only the configured host and port, TCP success status, elapsed time, and safe socket error fields on failure. An unset or incorrect secret returns `404`. Remove `MYSQL_TCP_DIAGNOSTIC_SECRET` from Render after the check to disable this endpoint.
+The response contains only the configured host and port, TCP success status, elapsed time, and safe socket error fields on failure. An unset or incorrect secret returns `401`. Remove `MYSQL_TCP_DIAGNOSTIC_SECRET` from Render after the check to disable this endpoint.
