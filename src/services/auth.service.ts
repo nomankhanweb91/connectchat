@@ -22,19 +22,19 @@ function redactDatabaseDiagnostic(value:string,loginPassword:string):string{
  if(loginPassword)safe=safe.split(loginPassword).join('[REDACTED]');
  return safe.replace(diagnosticBearerValue,'Bearer [REDACTED]').replace(diagnosticJwtValue,'[REDACTED_JWT]').replace(diagnosticSensitiveValue,'$1$2[REDACTED]');
 }
-function databaseErrorDetails(error:unknown,loginPassword:string,depth=0):Record<string,unknown>{
- const value=typeof error==='object'&&error!==null?error as {name?:unknown;message?:unknown;code?:unknown;errno?:unknown;syscall?:unknown;hostname?:unknown;address?:unknown;port?:unknown;errors?:unknown;cause?:unknown;constructor?:{name?:unknown}}:undefined;
+function databaseErrorDetails(error:unknown,loginPassword:string,visited=new WeakSet<object>()):Record<string,unknown>{
+ const value=typeof error==='object'&&error!==null?error as {name?:unknown;message?:unknown;code?:unknown;errno?:unknown;sqlState?:unknown;sqlMessage?:unknown;syscall?:unknown;hostname?:unknown;address?:unknown;port?:unknown;errors?:unknown;cause?:unknown;constructor?:{name?:unknown}}:undefined;
  const text=(item:unknown)=>typeof item==='string'||typeof item==='number'?redactDatabaseDiagnostic(String(item),loginPassword):undefined;
  const details:Record<string,unknown>={
   name:redactDatabaseDiagnostic(error instanceof Error?error.name:typeof value?.name==='string'?value.name:typeof value?.constructor?.name==='string'?value.constructor.name:typeof error,loginPassword),
  };
+ if(value&&visited.has(value))return {...details,circularReference:true};
+ if(value)visited.add(value);
  const message=error instanceof Error?error.message:typeof value?.message==='string'?value.message:undefined;
  if(message!==undefined)details.message=redactDatabaseDiagnostic(message,loginPassword);
- for(const field of ['code','errno','syscall','hostname','address','port'] as const){const fieldValue=text(value?.[field]);if(fieldValue!==undefined)details[field]=fieldValue;}
- if(depth<3){
-  if(Array.isArray(value?.errors))details.errors=value.errors.slice(0,8).map(cause=>databaseErrorDetails(cause,loginPassword,depth+1));
-  if(value?.cause!==undefined)details.cause=databaseErrorDetails(value.cause,loginPassword,depth+1);
- }
+ for(const field of ['code','errno','sqlState','sqlMessage','syscall','hostname','address','port'] as const){const fieldValue=text(value?.[field]);if(fieldValue!==undefined)details[field]=fieldValue;}
+ if(Array.isArray(value?.errors))details.errors=value.errors.map(cause=>databaseErrorDetails(cause,loginPassword,visited));
+ if(value?.cause!==undefined)details.cause=databaseErrorDetails(value.cause,loginPassword,visited);
  return details;
 }
 function logLoginDatabaseError(error:unknown,loginPassword:string):void{
