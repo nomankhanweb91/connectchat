@@ -12,6 +12,34 @@ const ttlMs=(value:string)=>{const m=value.match(/^(\d+)([smhd])$/);if(!m)throw 
 const publicUser=(u:UserRow)=>({id:u.id,username:u.username,name:u.name,country:u.country,city:u.city,gender:u.gender,profileImageUrl:u.profile_image_url,role:u.role,isActive:Boolean(u.is_active),isVerified:Boolean(u.is_verified),lastSeen:u.last_seen,createdAt:u.created_at});
 export const toPublicUser=publicUser;
 function accessToken(u:Pick<UserRow,'id'|'username'|'role'>){return jwt.sign({username:u.username,role:u.role,typ:'access'},env.JWT_SECRET,{subject:u.id,expiresIn:env.JWT_EXPIRES_IN as jwt.SignOptions['expiresIn']});}
+const diagnosticSecretName=/(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|COOKIE|AUTHORIZATION|CREDENTIAL|API[_-]?KEY|PRIVATE[_-]?KEY|DATABASE_USER|DB_USER)/i;
+const diagnosticSensitiveValue=/\b(password|passwd|secret|token|authorization|cookie|credential|api[_-]?key|private[_-]?key|username|user)\b(\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
+const diagnosticJwtValue=/\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g;
+const diagnosticBearerValue=/\bBearer\s+[^\s,;]+/gi;
+function redactDatabaseDiagnostic(value:string,loginPassword:string):string{
+ let safe=value;
+ for(const[key,secret]of Object.entries(process.env))if(secret&&diagnosticSecretName.test(key))safe=safe.split(secret).join('[REDACTED]');
+ if(loginPassword)safe=safe.split(loginPassword).join('[REDACTED]');
+ return safe.replace(diagnosticBearerValue,'Bearer [REDACTED]').replace(diagnosticJwtValue,'[REDACTED_JWT]').replace(diagnosticSensitiveValue,'$1$2[REDACTED]');
+}
+function databaseErrorDetails(error:unknown,loginPassword:string,depth=0):Record<string,unknown>{
+ const value=typeof error==='object'&&error!==null?error as {name?:unknown;message?:unknown;code?:unknown;errno?:unknown;syscall?:unknown;hostname?:unknown;address?:unknown;port?:unknown;errors?:unknown;cause?:unknown;constructor?:{name?:unknown}}:undefined;
+ const text=(item:unknown)=>typeof item==='string'||typeof item==='number'?redactDatabaseDiagnostic(String(item),loginPassword):undefined;
+ const details:Record<string,unknown>={
+  name:redactDatabaseDiagnostic(error instanceof Error?error.name:typeof value?.name==='string'?value.name:typeof value?.constructor?.name==='string'?value.constructor.name:typeof error,loginPassword),
+ };
+ const message=error instanceof Error?error.message:typeof value?.message==='string'?value.message:undefined;
+ if(message!==undefined)details.message=redactDatabaseDiagnostic(message,loginPassword);
+ for(const field of ['code','errno','syscall','hostname','address','port'] as const){const fieldValue=text(value?.[field]);if(fieldValue!==undefined)details[field]=fieldValue;}
+ if(depth<3){
+  if(Array.isArray(value?.errors))details.errors=value.errors.slice(0,8).map(cause=>databaseErrorDetails(cause,loginPassword,depth+1));
+  if(value?.cause!==undefined)details.cause=databaseErrorDetails(value.cause,loginPassword,depth+1);
+ }
+ return details;
+}
+function logLoginDatabaseError(error:unknown,loginPassword:string):void{
+ console.error('Database operation failed:',{operation:'auth.login',databaseHost:env.DATABASE_HOST,databasePort:env.DATABASE_PORT,...databaseErrorDetails(error,loginPassword)});
+}
 async function createSession(userId:string, ip:string|null, userAgent:string|null){
   const conn=await pool.getConnection();const sessionId=randomUUID();const raw=randomBytes(48).toString('base64url');
   try{await conn.beginTransaction();await conn.execute('INSERT INTO sessions (id,user_id,ip_address,user_agent) VALUES (?,?,?,?)',[sessionId,userId,ip,userAgent]);await conn.execute('INSERT INTO refresh_tokens (id,session_id,token_hash,expires_at) VALUES (?,?,?,?)',[randomUUID(),sessionId,digest(raw),new Date(Date.now()+ttlMs(env.REFRESH_TOKEN_EXPIRES_IN))]);await conn.commit();return raw;}catch(e){await conn.rollback();throw e;}finally{conn.release();}
@@ -22,8 +50,9 @@ export async function register(input:{name:string;username:string;password:strin
  const [rows]=await pool.execute<UserRow[]>('SELECT * FROM users WHERE id=?',[id]);const user=rows[0];if(!user)throw new Error('Created user could not be loaded');return {user:publicUser(user),accessToken:accessToken(user),refreshToken:await createSession(id,ip,ua)};
 }
 export async function login(username:string,password:string,ip:string|null,ua:string|null){
- const [rows]=await pool.execute<UserRow[]>('SELECT * FROM users WHERE username=? AND is_active=1',[username]);const user=rows[0];if(!user||!(await bcrypt.compare(password,user.password_hash)))throw new HttpError(401,'INVALID_CREDENTIALS','Username or password is incorrect');
- await pool.execute('UPDATE users SET last_seen=CURRENT_TIMESTAMP(3) WHERE id=?',[user.id]);return {user:publicUser(user),accessToken:accessToken(user),refreshToken:await createSession(user.id,ip,ua)};
+ try{const [rows]=await pool.execute<UserRow[]>('SELECT * FROM users WHERE username=? AND is_active=1',[username]);const user=rows[0];if(!user||!(await bcrypt.compare(password,user.password_hash)))throw new HttpError(401,'INVALID_CREDENTIALS','Username or password is incorrect');
+  await pool.execute('UPDATE users SET last_seen=CURRENT_TIMESTAMP(3) WHERE id=?',[user.id]);return {user:publicUser(user),accessToken:accessToken(user),refreshToken:await createSession(user.id,ip,ua)};
+ }catch(error){if(!(error instanceof HttpError))logLoginDatabaseError(error,password);throw error;}
 }
 export async function rotateRefresh(raw:string,ip:string|null,ua:string|null){
  const conn=await pool.getConnection();try{await conn.beginTransaction();const [rows]=await conn.execute<(RowDataPacket & {id:string;session_id:string;user_id:string;token_expires:Date;is_active:number})[]>('SELECT rt.id,rt.session_id,s.user_id,rt.expires_at AS token_expires,u.is_active FROM refresh_tokens rt JOIN sessions s ON s.id=rt.session_id JOIN users u ON u.id=s.user_id WHERE rt.token_hash=? AND rt.revoked_at IS NULL AND s.revoked_at IS NULL FOR UPDATE',[digest(raw)]);const row=rows[0];if(!row||row.token_expires<=new Date()||!row.is_active)throw new HttpError(401,'INVALID_REFRESH_TOKEN','Refresh token is invalid or expired');
@@ -32,4 +61,3 @@ export async function rotateRefresh(raw:string,ip:string|null,ua:string|null){
  }catch(e){await conn.rollback();throw e;}finally{conn.release();}
 }
 export async function revokeRefresh(raw?:string){if(!raw)return;await pool.execute('UPDATE refresh_tokens SET revoked_at=CURRENT_TIMESTAMP(3) WHERE token_hash=? AND revoked_at IS NULL',[digest(raw)]);}
-
